@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LOB-Core — live regime monitor</title>
+<style>
+  :root{
+    --bg:#0a0e14; --panel:#11161f; --panel2:#0d1219; --line:#1e2733;
+    --fg:#c9d4e3; --dim:#6b7a8d; --accent:#3fb950; --cyan:#58a6ff;
+    --green:#3fb950; --red:#f85149; --amber:#d29922;
+    --range:#58a6ff; --trend:#3fb950; --toxic:#f85149;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:
+      radial-gradient(1200px 600px at 80% -10%, #12203022, transparent),
+      var(--bg);
+    color:var(--fg);font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  a{color:var(--cyan);text-decoration:none}
+  header{display:flex;align-items:center;gap:18px;padding:18px 26px;border-bottom:1px solid var(--line)}
+  header .logo{font-size:26px;font-weight:700;letter-spacing:.5px;display:flex;align-items:center;gap:10px}
+  header .logo svg{width:30px;height:30px;flex:none}
+  header .logo span{color:var(--accent)}
+  header .tag{color:var(--dim);font-style:italic;font-size:13px}
+  header .live{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--accent);font-weight:600;font-size:12px;letter-spacing:1px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 0 #3fb95088;animation:pulse 1.4s infinite}
+  .coin{margin-left:14px;background:#0c121b;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font:13px ui-monospace,Menlo,monospace;font-weight:700;letter-spacing:1px;cursor:pointer}
+  .coin:focus{outline:none;border-color:var(--cyan)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 #3fb95088}70%{box-shadow:0 0 0 9px #3fb95000}100%{box-shadow:0 0 0 0 #3fb95000}}
+  .metrics{display:flex;gap:12px;flex-wrap:wrap;padding:16px 26px}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:10px;padding:11px 16px;min-width:118px}
+  .card .k{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+  .card .v{font-size:21px;font-weight:700;margin-top:3px}
+  .card .v small{font-size:12px;color:var(--dim);font-weight:400}
+  main{display:grid;grid-template-columns:300px 1fr 1fr;grid-template-rows:auto auto;gap:14px;padding:6px 26px 26px}
+  .panel{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .panel h3{margin:0 0 10px;font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.8px;font-weight:600}
+  .regime-panel{grid-row:span 2;display:flex;flex-direction:column}
+  .regime-badge{border-radius:12px;padding:22px 16px;text-align:center;border:1px solid var(--line);transition:all .35s}
+  .regime-badge .name{font-size:34px;font-weight:800;letter-spacing:1px}
+  .regime-badge .desc{font-size:12px;margin-top:6px;opacity:.85}
+  .regime-badge .bias{margin-top:13px;font-size:20px;font-weight:800;letter-spacing:2px}
+  .truth{margin-top:12px;color:var(--dim);font-size:12px;text-align:center}
+  .truth b{color:var(--fg)}
+  .ladder{margin-top:14px;flex:1;display:flex;flex-direction:column;gap:3px;justify-content:center}
+  .lvl{display:grid;grid-template-columns:1fr 64px 1fr;align-items:center;gap:6px;font-size:11px}
+  .bar{height:14px;border-radius:3px;transition:width .18s ease}
+  .bar.bid{justify-self:end;background:linear-gradient(90deg,#1e3a2a,#3fb95066);border-right:2px solid var(--green)}
+  .bar.ask{background:linear-gradient(90deg,#f8514966,#3a1e22);border-left:2px solid var(--red)}
+  .px{text-align:center;color:var(--dim)}
+  .row2{display:flex;gap:10px;margin-top:12px}
+  .stat{flex:1;background:#0c121b;border:1px solid var(--line);border-radius:8px;padding:8px 10px;text-align:center}
+  .stat .k{color:var(--dim);font-size:10px;text-transform:uppercase}
+  .stat .v{font-size:16px;font-weight:700;margin-top:2px}
+  canvas{width:100%;height:auto;display:block;border-radius:6px;background:#0a0e14}
+  .scatter-panel{grid-column:span 2}
+  .legend{display:flex;gap:16px;font-size:12px;margin-top:8px;color:var(--dim)}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+  footer{padding:16px 26px;border-top:1px solid var(--line);color:var(--dim);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  .pos{color:var(--green)} .neg{color:var(--red)}
+  @media(max-width:1000px){main{grid-template-columns:1fr}.regime-panel{grid-row:auto}.scatter-panel{grid-column:auto}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+    <defs>
+      <linearGradient id="lbid" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#3fb950" stop-opacity=".22"/><stop offset="1" stop-color="#3fb950" stop-opacity=".95"/></linearGradient>
+      <linearGradient id="lask" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#f85149" stop-opacity=".22"/><stop offset="1" stop-color="#f85149" stop-opacity=".95"/></linearGradient>
+    </defs>
+    <rect x="1.5" y="1.5" width="61" height="61" rx="14" fill="#0d1219" stroke="#1e2733" stroke-width="1.5"/>
+    <path d="M7 55 V24 H15 V31 H22 V38 H29 V45 H31.2 V55 Z" fill="url(#lbid)"/>
+    <path d="M57 55 V22 H49 V29 H42 V36 H35 V43 H32.8 V55 Z" fill="url(#lask)"/>
+    <line x1="32" y1="16" x2="32" y2="56" stroke="#58a6ff" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="32" cy="14" r="3" fill="#58a6ff"/></svg>LOB<span>-Core</span></div>
+  <div class="tag">"Don't predict, understand — price is a lagged illusion."</div>
+  <div class="live"><span class="dot"></span> <span id="livesrc">LIVE · regime inference</span></div>
+  <select id="coin" class="coin" style="display:none" aria-label="coin"></select>
+</header>
+
+<section class="metrics" id="metrics"></section>
+
+<main>
+  <div class="panel regime-panel">
+    <h3>Detected regime · label-free</h3>
+    <div class="regime-badge" id="badge"><div class="name" id="rname">—</div><div class="desc" id="rdesc"></div><div class="bias" id="bias"></div></div>
+    <div class="truth"><span id="rlabel">ground truth:</span> <b id="rtruth">—</b> <span id="rhit"></span></div>
+    <div class="row2">
+      <div class="stat"><div class="k">mid</div><div class="v" id="mid">—</div></div>
+      <div class="stat"><div class="k">cancel-flow</div><div class="v" id="cxl">—</div></div>
+      <div class="stat"><div class="k">trade-flow</div><div class="v" id="tf">—</div></div>
+    </div>
+    <h3 style="margin-top:16px">L2 depth ladder</h3>
+    <div class="ladder" id="ladder"></div>
+  </div>
+
+  <div class="panel">
+    <h3>Mid price</h3><canvas id="cMid" width="640" height="160"></canvas>
+  </div>
+  <div class="panel">
+    <h3>Cancel-flow (spoofing signal)</h3><canvas id="cCxl" width="640" height="160"></canvas>
+  </div>
+
+  <div class="panel">
+    <h3>Paper maker PnL · Avellaneda–Stoikov (no real orders)</h3><canvas id="cPnl" width="640" height="160"></canvas>
+  </div>
+  <div class="panel">
+    <h3>Inventory (risk-bounded)</h3><canvas id="cInv" width="640" height="160"></canvas>
+  </div>
+
+  <div class="panel scatter-panel">
+    <h3>Self-supervised latent space · VICReg embedding (PCA, coloured by regime)</h3>
+    <canvas id="cScatter" width="1320" height="280"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--range)"></i>RANGE</span>
+      <span><i style="background:var(--trend)"></i>TREND</span>
+      <span><i style="background:var(--toxic)"></i>TOXIC</span>
+      <span style="margin-left:auto">label-free clustering — ARI <b id="ariLeg">—</b></span>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div>LOB-Core · Project AURA subsystem · Apple Silicon · zero-copy C++↔MLX · <b>proprietary</b></div>
+  <div>spoofing (<span style="color:var(--toxic)">TOXIC</span>) vs trend (<span style="color:var(--trend)">TREND</span>) separated without labels</div>
+</footer>
+
+<script>
+const RC = {0:{n:"RANGE",c:"--range",d:"balanced two-sided liquidity"},
+            1:{n:"TREND",c:"--trend",d:"one-sided flow consumes the book"},
+            2:{n:"TOXIC",c:"--toxic",d:"spoofed / phantom depth — stand aside"}};
+const cssv = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+function lineChart(canvas, data, opts={}){
+  const x=canvas.getContext('2d'), w=canvas.width, h=canvas.height;   // fixed pixel buffer
+  x.clearRect(0,0,w,h);
+  if(!data.length) return;
+  let lo=Math.min(...data), hi=Math.max(...data); if(lo===hi){lo-=1;hi+=1;}
+  const pad=12, gx=i=>pad+i*(w-2*pad)/Math.max(1,data.length-1), gy=v=>h-pad-(v-lo)/(hi-lo)*(h-2*pad);
+  if(opts.zero && lo<0 && hi>0){x.strokeStyle="#2a3441";x.lineWidth=1;x.beginPath();x.moveTo(pad,gy(0));x.lineTo(w-pad,gy(0));x.stroke();}
+  const col = opts.color || '#58a6ff';
+  if(opts.fill){
+    const grad=x.createLinearGradient(0,0,0,h); grad.addColorStop(0,col+"55"); grad.addColorStop(1,col+"00");
+    x.beginPath();x.moveTo(gx(0),gy(data[0]));data.forEach((v,i)=>x.lineTo(gx(i),gy(v)));
+    x.lineTo(gx(data.length-1),h-pad);x.lineTo(gx(0),h-pad);x.closePath();x.fillStyle=grad;x.fill();
+  }
+  x.beginPath();x.lineWidth=2.4;x.strokeStyle=col;x.lineJoin='round';
+  data.forEach((v,i)=>{i?x.lineTo(gx(i),gy(v)):x.moveTo(gx(i),gy(v));});x.stroke();
+  x.fillStyle=col;x.beginPath();x.arc(gx(data.length-1),gy(data[data.length-1]),4,0,7);x.fill();
+}
+
+function scatterChart(canvas, sc){
+  const x=canvas.getContext('2d'), w=canvas.width, h=canvas.height;
+  x.clearRect(0,0,w,h);
+  if(!sc) return;
+  const xs=sc.x, ys=sc.y, lo=a=>Math.min(...a), hi=a=>Math.max(...a);
+  const x0=lo(xs),x1=hi(xs),y0=lo(ys),y1=hi(ys),pad=16;
+  const px=v=>pad+(v-x0)/(x1-x0)*(w-2*pad), py=v=>h-pad-(v-y0)/(y1-y0)*(h-2*pad);
+  const cols=['#58a6ff','#3fb950','#f85149'];
+  for(let i=0;i<xs.length;i++){x.fillStyle=cols[sc.r[i]]+"cc";x.beginPath();x.arc(px(xs[i]),py(ys[i]),2,0,7);x.fill();}
+}
+
+let D=null, MODE='replay', SRC='', idx=0, mids=[], cxls=[], pnls=[], invs=[];
+const $=id=>document.getElementById(id);
+function fmtPx(p){p=+p;return p>=100?p.toLocaleString(undefined,{maximumFractionDigits:1}):p>=1?p.toFixed(3):p.toFixed(5);}
+
+function metricCard(k,v){return `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`;}
+function pct(v){return v==null?"—":(+v).toFixed(3);}
+
+function renderMetrics(m){
+  let html="";
+  html+=metricCard("KMeans ARI", m.ari==null?"—":(+m.ari).toFixed(3));
+  html+=metricCard("Linear-sep", pct(m.linear_sep));
+  html+=metricCard("OOS ARI", pct(m.oos_ari));
+  html+=metricCard("Cluster purity", pct(m.purity));
+  if(m.batched_latency_us!=null) html+=metricCard("Inference", `${m.batched_latency_us}<small> µs/snap</small>`);
+  html+=metricCard("Zero-copy read", `${m.bridge_read_ns}<small> ns</small>`);
+  html+=metricCard("Ring throughput", `${m.bridge_throughput_mps}<small>M/s</small>`);
+  $("metrics").innerHTML=html;
+  $("ariLeg").textContent = m.ari==null?"—":(+m.ari).toFixed(2);
+}
+
+function renderLadder(s){
+  const N=Math.min(10,s.bsz.length);
+  const mx=Math.max(...s.bsz.slice(0,N),...s.asz.slice(0,N),1);
+  let html="";
+  for(let i=0;i<N;i++){
+    const bw=Math.round(s.bsz[i]/mx*100), aw=Math.round(s.asz[i]/mx*100);
+    const bp=fmtPx(s.mid-s.bpx[i]), ap=fmtPx(s.mid+s.apx[i]);
+    html+=`<div class="lvl">
+      <div class="bar bid" style="width:${bw}%"></div>
+      <div class="px">${bp}<span style="opacity:.4">·</span>${ap}</div>
+      <div class="bar ask" style="width:${aw}%"></div></div>`;
+  }
+  $("ladder").innerHTML=html;
+}
+
+function render(s){
+  const rc=RC[s.rp]||RC[0], col=cssv(rc.c);
+  const badge=$("badge");
+  badge.style.background=col+"1f"; badge.style.borderColor=col+"66"; badge.style.boxShadow=`0 0 30px ${col}22`;
+  $("rname").textContent=rc.n; $("rname").style.color=col; $("rdesc").textContent=rc.d;
+  const dr=s.dir||0;
+  $("bias").innerHTML = dr>0 ? '<span style="color:var(--green)">&#9650; BULL</span>'
+                      : dr<0 ? '<span style="color:var(--red)">&#9660; BEAR</span>'
+                      : '<span style="color:var(--dim)">&#8212; FLAT</span>';
+  if(MODE==='live'){ $("rtruth").textContent=s.sym||SRC; $("rhit").innerHTML=''; }
+  else if(D&&D.meta&&D.meta.real){ $("rtruth").textContent=D.meta.source; $("rhit").innerHTML=''; }
+  else { $("rtruth").textContent=(RC[s.rt]||RC[0]).n;
+         $("rhit").innerHTML = s.rp===s.rt ? '<span style="color:var(--green)">match</span>' : '<span style="color:var(--amber)">differ</span>'; }
+  $("mid").textContent=fmtPx(s.mid);
+  $("cxl").textContent=(+s.cxl).toFixed(0);
+  $("tf").innerHTML=`<span class="${s.tf>=0?'pos':'neg'}">${s.tf>=0?'+':''}${(+s.tf).toFixed(0)}</span>`;
+  renderLadder(s);
+  const W=90;
+  mids.push(s.mid); cxls.push(s.cxl); pnls.push(s.pnl); invs.push(s.inv);
+  if(mids.length>W){mids.shift();cxls.shift();pnls.shift();invs.shift();}
+  lineChart($("cMid"), mids, {color:cssv('--cyan')});
+  lineChart($("cCxl"), cxls, {color:cssv('--toxic'), fill:true});
+  lineChart($("cPnl"), pnls, {color: pnls[pnls.length-1]>=0?cssv('--green'):cssv('--red'), zero:true, fill:true});
+  lineChart($("cInv"), invs, {color:cssv('--amber'), zero:true});
+}
+function step(){ if(!D||!D.snapshots.length) return; render(D.snapshots[idx]); idx=(idx+1)%D.snapshots.length; }
+
+function startReplay(d){
+  D=d; MODE='replay';
+  if(d.meta&&d.meta.real){ $("livesrc").textContent="LIVE · "+d.meta.source; $("rlabel").textContent="data source:"; }
+  renderMetrics(d.metrics); scatterChart($("cScatter"), d.scatter);
+  setInterval(step,120); step();
+  window.addEventListener('resize',()=>scatterChart($("cScatter"),d.scatter));
+}
+
+let ES=null, LASTSCAT=null;
+function connectLive(sym){
+  if(ES) ES.close();
+  mids=[];cxls=[];pnls=[];invs=[]; LASTSCAT=null; scatterChart($("cScatter"), null);
+  ES=new EventSource('/stream?symbol='+encodeURIComponent(sym));
+  ES.onmessage=ev=>{ const m=JSON.parse(ev.data);
+    if(m.snap) render(m.snap);
+    if(m.scatter){ LASTSCAT=m.scatter; scatterChart($("cScatter"), m.scatter); } };
+}
+function startLive(cfg){
+  MODE='live'; SRC=cfg.symbol;
+  $("rlabel").textContent="market:"; $("ariLeg").textContent="live";
+  renderMetrics(cfg.metrics);
+  const sel=$("coin"); sel.style.display='';
+  sel.innerHTML=cfg.symbols.map(s=>`<option ${s===cfg.symbol?'selected':''}>${s}</option>`).join('');
+  sel.onchange=()=>{ SRC=sel.value; $("livesrc").textContent="LIVE · "+sel.value;
+    fetch('/set?symbol='+sel.value); connectLive(sel.value); };
+  $("livesrc").textContent="LIVE · "+cfg.symbol;
+  window.addEventListener('resize',()=>{ if(LASTSCAT) scatterChart($("cScatter"),LASTSCAT); });
+  connectLive(cfg.symbol);
+}
+
+fetch('/config.json').then(r=>{if(!r.ok)throw 0;return r.json();})
+  .then(cfg=>{ if(cfg.mode!=='live') throw 0; startLive(cfg); })
+  .catch(()=>{ fetch('dashboard_data.json').then(r=>r.json()).then(startReplay)
+    .catch(e=>document.body.insertAdjacentHTML('beforeend',
+      `<p style="padding:26px;color:var(--red)">Failed to load — run <code>lob_core web</code>. (${e})</p>`)); });
+</script>
+</body>
+</html>

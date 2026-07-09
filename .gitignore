@@ -1,0 +1,54 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+dist/
+.installed.cfg
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Virtualenvs ---
+.venv/
+venv/
+env/
+
+# --- Native build (regenerable via `make build-cpp`) ---
+build/
+*.so
+*.o
+*.a
+*.dylib
+CMakeCache.txt
+CMakeFiles/
+
+# --- Regenerable data & model artifacts (never commit; `make demo`/`reproduce`) ---
+data/
+artifacts/
+results/
+logs/
+*.parquet
+*.safetensors
+*.npz
+*.ckpt
+
+# --- Secrets & credentials (NEVER commit) ---
+.env
+.env.*
+!.env.example
+secrets/
+*.key
+*.pem
+~/.tradingagents/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

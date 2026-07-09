@@ -1,0 +1,109 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kairos"
+version = "1.0.0"
+description = "Kairos — the AURA dual-process trading brain: strictly-causal System-1 microstructure perception (LOB-Core) fused with System-2 multi-agent LLM reasoning (TradingAgents)."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "cleoanka" }]
+license = { text = "Proprietary — All Rights Reserved (bundles Apache-2.0 components; see NOTICE)" }
+keywords = ["trading", "neuro-symbolic", "market-microstructure", "multi-agent", "llm", "limit-order-book", "causal"]
+
+# --- Core: always installed. Perception inference, the causal bridge,
+# execution, and the cognitive loop in deterministic mode. No LLM, no MLX, no
+# API keys — runs anywhere, including CI. ---
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "pyarrow>=15.0",
+    "scikit-learn>=1.4",
+    "rich>=13.0",
+    "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+# System-2: the multi-agent LLM reasoning firm (TradingAgents).
+reasoning = [
+    "langchain-core>=0.3.81",
+    "langchain-anthropic>=0.3.15",
+    "langchain-openai>=0.3.23",
+    "langchain-google-genai>=4.0.0",
+    "langchain-experimental>=0.3.4",
+    "langgraph>=0.4.8",
+    "langgraph-checkpoint-sqlite>=2.0.0",
+    "stockstats>=0.6.5",
+    "yfinance>=1.4.1",
+    "backtrader>=1.9.78.123",
+    "questionary>=2.1.0",
+    "typer>=0.21.0",
+    "tqdm>=4.67.1",
+    "pytz>=2025.2",
+    "parsel>=1.10.0",
+    "requests>=2.32.4",
+    "redis>=6.2.0",
+    "python-dotenv>=1.0.0",
+]
+# System-1 training backend (Apple Silicon). Inference has a numpy fallback.
+mlx = ["mlx>=0.18"]
+# Native zero-copy C++ ring (pybind11 bridge).
+native = ["pybind11>=2.12"]
+# Charts / heatmaps for the perception reports and dashboard.
+viz = ["matplotlib>=3.8"]
+# Amazon Bedrock provider for System-2.
+bedrock = ["langchain-aws>=1.5.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-subtests>=0.13",
+    "ruff>=0.5",
+    "pybind11>=2.12",
+]
+# Everything except the platform-specific MLX training backend.
+all = [
+    "kairos[reasoning,native,viz,bedrock]",
+]
+
+[project.scripts]
+kairos = "kairos.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["kairos*"]
+
+[tool.setuptools.package-data]
+"kairos.perception" = ["web/*.html"]
+"kairos.reasoning_cli" = ["static/*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "unit: fast isolated unit tests",
+    "integration: tests requiring external services or heavy optional deps",
+    "reasoning: tests requiring the [reasoning] extra (langchain/langgraph)",
+    "mlx: tests requiring the [mlx] extra (Apple Silicon)",
+    "native: tests requiring the built C++ bridge",
+    "smoke: quick end-to-end sanity checks",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["build", "artifacts", "data", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true

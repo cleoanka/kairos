@@ -1,0 +1,24 @@
+Kairos — the AURA dual-process trading brain
+Copyright (c) 2026 cleoanka.
+
+This product includes third-party software:
+
+1. TradingAgents  (Apache License 2.0)
+   Copyright (c) Tauric Research.
+   Source: https://github.com/TauricResearch/TradingAgents
+   Location in this repository: src/kairos/reasoning/, src/kairos/reasoning_cli/
+   Modifications: the package was renamed from `tradingagents` to
+   `kairos.reasoning` (and `cli` to `kairos.reasoning_cli`); a new opt-in
+   "Microstructure Analyst" and its LangGraph wiring were added
+   (agent_states.py, analyst_execution.py, conditional_logic.py, graph/setup.py,
+   graph/trading_graph.py) so the reasoning graph can read the Kairos causal
+   perception bus; `propagate()` gained an optional `perception_bus` argument.
+   The full Apache-2.0 license text is in LICENSE-APACHE-2.0.txt.
+
+2. LOB-Core  (the System-1 perception engine, src/kairos/perception/, src/cpp/)
+   Copyright (c) 2026 cleoanka. Originally the "finance-demo"
+   / Project AURA subsystem. Proprietary — see LICENSE.
+
+The Owner's original contributions — the causal bridge (src/kairos/bridge),
+the cognitive loop (src/kairos/loop), the unified CLI and Constitution — are
+proprietary and governed by LICENSE.

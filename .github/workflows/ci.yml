@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # System-1 + bridge + loop: the portable core. No LLM, no MLX, no keys.
+  core:
+    name: core (soul + bridge + loop + perception)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install core + dev
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,viz]"
+      - name: Constitution (soul_check)
+        run: python scripts/soul_check.py
+      - name: Lint (Kairos-original code; vendored subtrees keep upstream style)
+        run: ruff check src/kairos/bridge src/kairos/loop src/kairos/cli.py src/kairos/__init__.py scripts/soul_check.py scripts/reproduce.py tests/bridge tests/loop
+      - name: Core tests
+        run: pytest tests/bridge tests/loop tests/perception -q -m "not mlx and not native and not reasoning"
+      - name: Reproducibility gate
+        run: python scripts/reproduce.py
+
+  # System-2: the multi-agent reasoning firm + the bridge graph wiring.
+  reasoning:
+    name: reasoning (TradingAgents graph + microstructure integration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install core + reasoning
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,reasoning]"
+      - name: Reasoning + integration tests
+        env:  # placeholders so no test makes a live API call
+          OPENAI_API_KEY: placeholder
+          ANTHROPIC_API_KEY: placeholder
+          GOOGLE_API_KEY: placeholder
+        run: pytest tests/reasoning -q

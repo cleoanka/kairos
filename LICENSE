@@ -1,0 +1,33 @@
+Kairos — the AURA dual-process trading brain
+Copyright (c) 2026 cleoanka. All rights reserved.
+
+PROPRIETARY LICENSE (umbrella)
+
+This repository is a combined work. Except for the third-party components listed
+in NOTICE, this software and its source code — in particular the original
+System-1 perception engine (src/kairos/perception), the causal bridge
+(src/kairos/bridge), the cognitive loop (src/kairos/loop), the unified CLI, the
+Constitution enforcer, and all integration code — are the confidential and
+proprietary work of cleoanka ("Owner"), and contain alpha-generating
+logic of material commercial value.
+
+No license, express or implied, is granted to any person to use, copy, modify,
+merge, publish, distribute, sublicense, or sell copies of the proprietary
+portions of this software, in whole or in part, without the prior written
+permission of the Owner.
+
+THIRD-PARTY COMPONENTS
+
+This work incorporates and modifies TradingAgents (© Tauric Research), which is
+licensed under the Apache License, Version 2.0. Those portions live under
+src/kairos/reasoning/ and src/kairos/reasoning_cli/ and remain governed by the
+Apache-2.0 license (see LICENSE-APACHE-2.0.txt and NOTICE). Your rights in those
+portions are those granted by Apache-2.0; the proprietary terms above apply only
+to the Owner's original work.
+
+DISCLAIMER
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. TRADING FINANCIAL INSTRUMENTS CARRIES RISK; THE OWNER ASSUMES NO
+LIABILITY FOR ANY FINANCIAL LOSS ARISING FROM USE OF THIS SOFTWARE. THIS IS NOT
+FINANCIAL, INVESTMENT, OR TRADING ADVICE.
