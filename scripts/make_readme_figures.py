@@ -107,7 +107,8 @@ def fig_regime_separation():
     ax.set_title("System-1 separates market regimes with no labels", pad=14)
     ax.text(0.0, 1.02, "self-supervised LOB embedding (VICReg) → PCA-2D, colored by ground-truth regime  ·  out-of-sample ARI ≈ 0.99",
             transform=ax.transAxes, fontsize=9.5, color=MUTED)
-    ax.set_xlabel("PC-1"); ax.set_ylabel("PC-2")
+    ax.set_xlabel("PC-1")
+    ax.set_ylabel("PC-2")
     leg = ax.legend(loc="upper right", markerscale=2.2, fontsize=10)
     for t in leg.get_texts():
         t.set_color(FG)
@@ -165,7 +166,6 @@ def fig_equity_curves():
 
 # --- Figure 3 : the causal boundary -----------------------------------------
 def fig_causal_boundary():
-    rng = np.random.default_rng(3)
     fig, ax = plt.subplots(figsize=(11, 3.6), dpi=170)
     n = 26
     xs = np.linspace(0.4, 9.6, n)
@@ -186,7 +186,8 @@ def fig_causal_boundary():
     ax.annotate("FUTURE — unreachable by construction →", xy=(cutoff + 0.15, -0.6),
                 ha="left", color=C_TOXIC, fontsize=11)
     ax.set_title("The causal boundary: System-2 reads perception only up to the cutoff", pad=16)
-    ax.set_xlim(0, 10); ax.set_ylim(-1.0, 1.0)
+    ax.set_xlim(0, 10)
+    ax.set_ylim(-1.0, 1.0)
     ax.axis("off")
     fig.tight_layout()
     fig.savefig(OUT / "causal_boundary.png", bbox_inches="tight")
@@ -215,7 +216,8 @@ def fig_veto_timeline():
     ax.scatter(x[tox], mid[tox], s=10, color=C_TOXIC, zorder=4, alpha=0.6)
     _style(ax)
     ax.set_title("System-1 veto in action: red = TOXIC regime → the maker stands aside", pad=14)
-    ax.set_xlabel("forward step"); ax.set_ylabel("mid price")
+    ax.set_xlabel("forward step")
+    ax.set_ylabel("mid price")
     handles = [mpatches.Patch(color=REGIME_COLOR[int(r)], alpha=0.5, label=r.name)
                for r in (Regime.RANGE, Regime.TREND, Regime.TOXIC)]
     leg = ax.legend(handles=handles, loc="upper left", fontsize=10)

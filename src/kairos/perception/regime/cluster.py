@@ -41,7 +41,7 @@ def _purity(true: np.ndarray, pred: np.ndarray) -> tuple[float, dict]:
 
 def _confusion(true: np.ndarray, pred: np.ndarray, k: int) -> np.ndarray:
     m = np.zeros((len(Regime), k), dtype=int)
-    for t, p in zip(true, pred):
+    for t, p in zip(true, pred, strict=True):
         m[t, p] += 1
     return m
 

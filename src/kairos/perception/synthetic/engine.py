@@ -111,7 +111,7 @@ class OrderBook:
             offs = [p - mid for p in prices]
         px = np.zeros(N_LEVELS, dtype=np.float64)
         sz = np.zeros(N_LEVELS, dtype=np.float64)
-        for i, (p, o) in enumerate(zip(prices, offs)):
+        for i, (p, o) in enumerate(zip(prices, offs, strict=True)):
             px[i] = o
             sz[i] = book[p]
         # Pad empty deeper levels with a monotone synthetic offset, zero size.

@@ -49,7 +49,7 @@ def test_build_subscribe_is_websocket_op():
 # --- live order book ---------------------------------------------------------
 def test_orderbook_snapshot_emits_valid_schema_snapshot():
     b = LiveOrderBook(tick_size=0.1)
-    bids = [(f := 100.0 - i * 0.1, 2.0 + i) for i in range(10)]
+    bids = [(100.0 - i * 0.1, 2.0 + i) for i in range(10)]
     asks = [(100.1 + i * 0.1, 2.0 + i) for i in range(10)]
     b.apply_depth(bids, asks, is_snapshot=True)
     assert b.ready()

@@ -75,7 +75,6 @@ def run(frames: int = 60, delay: float = 0.06,
 
     n = len(df)
     step = max(1, n // frames)
-    cols = df.columns
 
     def render(i: int):
         row = df.iloc[i]

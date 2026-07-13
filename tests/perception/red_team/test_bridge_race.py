@@ -161,9 +161,13 @@ def test_size_never_exceeds_capacity_under_race(bridge):
     pt = threading.Thread(target=producer)
     wt = threading.Thread(target=watcher)
     ct = threading.Thread(target=consumer)
-    ct.start(); wt.start(); pt.start()
-    pt.join(timeout=120); ct.join(timeout=120)
-    stop.set(); wt.join(timeout=120)
+    ct.start()
+    wt.start()
+    pt.start()
+    pt.join(timeout=120)
+    ct.join(timeout=120)
+    stop.set()
+    wt.join(timeout=120)
 
     assert not violations, f"size() exceeded capacity {cap}: saw {violations[:3]}"
 
@@ -199,8 +203,10 @@ def test_no_lost_or_duplicated_snapshots(bridge):
 
     pt = threading.Thread(target=producer)
     ct = threading.Thread(target=consumer)
-    ct.start(); pt.start()
-    pt.join(timeout=120); ct.join(timeout=120)
+    ct.start()
+    pt.start()
+    pt.join(timeout=120)
+    ct.join(timeout=120)
 
     assert not fail, fail[:3]
     assert seen_max["v"] == total - 1, f"did not consume all: last={seen_max['v']}"

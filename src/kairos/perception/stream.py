@@ -64,9 +64,13 @@ class _LiveMaker:
         ts = ts if math.isfinite(ts) else 0.0
         q = self.q
         if q.ask_px is not None and q.ask_sz > 0 and tb > 0 and q.ask_px <= ba + 1e-9:
-            f = min(q.ask_sz, tb); self.inv -= f; self.cash += f * q.ask_px
+            f = min(q.ask_sz, tb)
+            self.inv -= f
+            self.cash += f * q.ask_px
         if q.bid_px is not None and q.bid_sz > 0 and ts > 0 and q.bid_px >= bb - 1e-9:
-            f = min(q.bid_sz, ts); self.inv += f; self.cash -= f * q.bid_px
+            f = min(q.bid_sz, ts)
+            self.inv += f
+            self.cash -= f * q.bid_px
         pnl = self.cash + self.inv * mid
         if not self.risk.update(pnl):
             self.q = self._Quote(None, 0.0, None, 0.0)
@@ -148,7 +152,8 @@ class _Stream:
             thr = max(1e-9, 0.4 * float(arr.std())) if len(arr) > 4 else 1e18
             dirv = 1 if drift > thr else (-1 if drift < -thr else 0)
             if z is not None:
-                self._lat.append(z); self._reg.append(regime)
+                self._lat.append(z)
+                self._reg.append(regime)
             self._since_scatter += 1
             if self._since_scatter >= 15 and len(self._lat) >= 20:
                 self.scatter = self._compute_scatter()
@@ -286,7 +291,7 @@ class _Handler(BaseHTTPRequestHandler):
             while STREAM.running:
                 with STREAM.cond:
                     STREAM.cond.wait_for(
-                        lambda: STREAM.seq != last or not STREAM.running, timeout=5)
+                        lambda last=last: STREAM.seq != last or not STREAM.running, timeout=5)
                     fresh = STREAM.seq != last
                     if fresh:
                         last = STREAM.seq

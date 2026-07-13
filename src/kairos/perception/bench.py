@@ -44,7 +44,7 @@ def run_bench(n: int = 2000, seed: int = 5) -> dict:
         "batches": {},
     }
     for b in (64, 256, min(n, 2000)):
-        lat = _bench(lambda: p.predict_from_raw(raw[:b]), 50)
+        lat = _bench(lambda b=b: p.predict_from_raw(raw[:b]), 50)
         res["batches"][b] = {
             "total_us": lat * 1e6,
             "per_snap_us": lat / b * 1e6,

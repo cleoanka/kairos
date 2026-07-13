@@ -40,7 +40,7 @@ def evaluate_oos(seed: int = 99, n_steps: int = 6000,
     lin = float(cross_val_score(LogisticRegression(max_iter=2000), zs, regime, cv=5).mean())
 
     conf = np.zeros((len(Regime), 3), dtype=int)
-    for t, p in zip(regime, pred):
+    for t, p in zip(regime, pred, strict=True):
         conf[t, p] += 1
     dom = {int(r): int(conf[r].argmax()) for r in range(len(Regime))}
     purity = float(conf.max(axis=0).sum() / len(regime))
