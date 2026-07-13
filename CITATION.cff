@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use Kairos in your research, please cite it as below."
+title: "Kairos — the AURA dual-process trading brain"
+abstract: >-
+  Kairos fuses a strictly-causal System-1 order-book microstructure
+  perception engine (LOB-Core) with a System-2 multi-agent LLM reasoning
+  firm (TradingAgents) over a Causal Perception Bus, closing the backtest
+  look-ahead hole by construction rather than by review.
+type: software
+authors:
+  - alias: cleoanka
+    name: cleoanka
+repository-code: "https://github.com/cleoanka/kairos"
+url: "https://github.com/cleoanka/kairos"
+version: "1.0.0"
+date-released: "2026-07-08"
+license: LicenseRef-Proprietary
+keywords:
+  - neuro-symbolic
+  - market-microstructure
+  - limit-order-book
+  - causal-inference
+  - multi-agent
+  - llm
+  - quantitative-finance
+  - trading
