@@ -42,11 +42,11 @@ def _run(cmd) -> tuple[int, str]:
 def main() -> int:
     checks: list[tuple[str, bool, str]] = []
 
-    print("[1/7] Constitution (soul_check)…")
+    print("[1/8] Constitution (soul_check)…")
     rc, _ = _run([PY, "scripts/soul_check.py", "--quiet"])
     checks.append(("Constitution green", rc == 0, ""))
 
-    print("[2/7] Core test suite (bridge + loop + perception)…")
+    print("[2/8] Core test suite (bridge + loop + perception)…")
     rc, out = _run([PY, "-m", "pytest", "tests/bridge", "tests/loop", "tests/perception",
                     "-q", "-m", "not mlx and not native and not reasoning"])
     tail = out.strip().splitlines()[-1] if out.strip() else ""
@@ -55,7 +55,7 @@ def main() -> int:
     # In-process checks (need src on the path).
     sys.path.insert(0, SRC)
 
-    print("[3/7] Causality — as_of never leaks the future…")
+    print("[3/8] Causality — as_of never leaks the future…")
     from kairos.bridge import build_causal_bus
     from kairos.perception.synthetic.generate import generate
     df = generate(n_steps=3000, seed=11, scenario="toxic")
@@ -67,14 +67,14 @@ def main() -> int:
             leak = True
     checks.append(("No look-ahead leak", not leak, f"probed 3 cutoffs over {len(bus)} percepts"))
 
-    print("[4/7] Cognitive loop is deterministic…")
+    print("[4/8] Cognitive loop is deterministic…")
     from kairos.loop import LoopConfig, run_cognitive_loop
     a = run_cognitive_loop(LoopConfig(scenario="toxic", n_steps=3000, seed=11)).to_dict()
     b = run_cognitive_loop(LoopConfig(scenario="toxic", n_steps=3000, seed=11)).to_dict()
     det = a["decision"] == b["decision"] and a["execution"]["final_pnl"] == b["execution"]["final_pnl"]
     checks.append(("Loop deterministic", det, f"pnl={a['execution']['final_pnl']}"))
 
-    print("[5/7] System-1 veto — forced-TOXIC market stands aside…")
+    print("[5/8] System-1 veto — forced-TOXIC market stands aside…")
     from kairos.bridge import Decision, ExecutionLink, MicrostructureConfig
     rep = ExecutionLink().execute(Decision("BUY", 1.0), df,
                                   cfg=MicrostructureConfig(toxic_threshold=-1.0))

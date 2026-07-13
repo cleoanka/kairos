@@ -3,7 +3,7 @@
 <p align="center"><i>System-1 order-book microstructure perception, fused with System-2 multi-agent LLM reasoning —<br>under a look-ahead guarantee that holds <b>by construction</b>, not by review.</i></p>
 
 <p align="center">
-  <img alt="tests" src="https://img.shields.io/badge/tests-592%20passing-2ea44f?style=flat-square">
+  <a href="https://github.com/cleoanka/kairos/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/cleoanka/kairos/ci.yml?branch=main&label=CI&style=flat-square"></a>
   <img alt="constitution" src="https://img.shields.io/badge/constitution-green-2ea44f?style=flat-square">
   <img alt="causality" src="https://img.shields.io/badge/look--ahead-impossible%20by%20construction-8957e5?style=flat-square">
   <img alt="python" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square">
@@ -257,7 +257,7 @@ src/kairos/
 src/cpp, src/bindings   C++ zero-copy ring
 scripts/         soul_check.py · reproduce.py · make_readme_figures.py · build_cpp.sh
 docs/            ARCHITECTURE · PHILOSOPHY · CAUSALITY · HOW_IT_WORKS  (+ images/)
-tests/           bridge · loop · perception · reasoning   (592 tests)
+tests/           bridge · loop · perception · reasoning   (598 passing, 14 skipped)
 ```
 
 ## 📚 Documentation
