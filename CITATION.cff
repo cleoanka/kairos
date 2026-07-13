@@ -14,7 +14,9 @@ repository-code: "https://github.com/cleoanka/kairos"
 url: "https://github.com/cleoanka/kairos"
 version: "1.0.0"
 date-released: "2026-07-08"
-license: LicenseRef-Proprietary
+# License is intentionally omitted: the CFF `license` field only accepts SPDX
+# identifiers, and Kairos ships under a proprietary source-available umbrella
+# (bundling Apache-2.0 components). See LICENSE and NOTICE for the real terms.
 keywords:
   - neuro-symbolic
   - market-microstructure
