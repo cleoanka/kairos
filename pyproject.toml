@@ -58,6 +58,7 @@ dev = [
     "pytest>=8.0",
     "pytest-subtests>=0.13",
     "ruff>=0.5",
+    "mypy>=1.10",
     "pybind11>=2.12",
 ]
 # Everything except the platform-specific MLX training backend.
@@ -96,6 +97,21 @@ markers = [
     "smoke: quick end-to-end sanity checks",
 ]
 filterwarnings = ["ignore::DeprecationWarning"]
+
+# A type gate scoped to the Kairos-original neuro-symbolic core: the causal
+# bridge, the cognitive loop, and the CLI. These subtrees are 0-error today, so
+# the gate is real and green — it catches a regression the moment one lands.
+# The vendored TradingAgents tree (src/kairos/reasoning*) is a long tail of
+# upstream-style typing debt and is left OUT of the gate on purpose, mirroring
+# how ruff only lints the Kairos-original code (see [tool.ruff] / ci.yml).
+[tool.mypy]
+files = ["src/kairos/bridge", "src/kairos/loop", "src/kairos/cli.py"]
+mypy_path = "src"
+# Pin to the .venv interpreter: numpy's 3.13 stubs use `type` statements that
+# mypy cannot parse under an older target (it aborts before checking anything).
+python_version = "3.13"
+ignore_missing_imports = true
+check_untyped_defs = true
 
 [tool.ruff]
 line-length = 100
