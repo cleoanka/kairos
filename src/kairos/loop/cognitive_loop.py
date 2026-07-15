@@ -122,10 +122,16 @@ def _llm_decision(bus, symbol: str, decision_time: str, config: dict | None,
 
 
 def _baselines(forward_df, link: ExecutionLink, regime_backend, cfg) -> dict:
-    """Score honest reference strategies over the same forward window."""
-    out = {}
+    """Score honest reference strategies over the same forward window.
+
+    ``stand_aside`` is the genuinely flat null strategy — it posts no quotes,
+    takes no fills and risks nothing, so it is a real reference for the edge a
+    strategy adds rather than a self-comparison. (A HOLD/0.0 decision still runs
+    the two-sided market maker through System-1, which is exactly what
+    ``pure_market_making`` measures — hence the two must not be conflated.)"""
+    out = {"stand_aside": {"final_pnl": 0.0, "fills": 0,
+                           "final_inventory": 0.0, "halted": False}}
     for name, dec in {
-        "stand_aside": Decision("HOLD", 0.0, source="baseline"),
         "naive_long": Decision("BUY", 1.0, source="baseline"),
         "pure_market_making": Decision("HOLD", 0.0, source="baseline"),
     }.items():

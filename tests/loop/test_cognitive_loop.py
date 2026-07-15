@@ -31,6 +31,23 @@ def test_loop_is_deterministic():
     assert a["execution"]["final_pnl"] == b["execution"]["final_pnl"]
 
 
+def test_stand_aside_is_a_genuinely_flat_baseline():
+    """stand_aside does nothing and risks nothing: no fills, zero PnL/inventory,
+    never halted — a real null reference, not a HOLD/0.0 self-comparison."""
+    res = run_cognitive_loop(LoopConfig(scenario="range", n_steps=2000, seed=7))
+    sa = res.baselines["stand_aside"]
+    assert sa == {"final_pnl": 0.0, "fills": 0, "final_inventory": 0.0, "halted": False}
+
+
+def test_stand_aside_differs_from_pure_market_making():
+    """The two baselines must be distinct: pure_market_making actively quotes
+    two-sided (generally taking fills), stand_aside stays flat."""
+    res = run_cognitive_loop(LoopConfig(scenario="range", n_steps=2000, seed=7))
+    sa, pmm = res.baselines["stand_aside"], res.baselines["pure_market_making"]
+    assert pmm["fills"] > 0                       # the maker actually traded
+    assert (sa["fills"], sa["final_pnl"]) != (pmm["fills"], pmm["final_pnl"])
+
+
 def test_deterministic_policy_stands_aside_on_toxic():
     from kairos.bridge.percept import Percept
 
