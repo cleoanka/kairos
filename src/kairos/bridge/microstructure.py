@@ -70,8 +70,10 @@ def raw_signals(window, cfg: MicrostructureConfig) -> dict:
     trade_intensity = 1.0 - math.exp(-trades / (max(n, 1) * cfg.intensity_scale))
 
     blend = cfg.ofi_weight * ofi + (1.0 - cfg.ofi_weight) * depth_imbalance
-    if not math.isfinite(mid) or not math.isfinite(spread_ticks):
-        # Corrupt/one-sided book: force a stand-aside reading.
+    if not all(map(math.isfinite, (mid, spread_ticks, toxicity, blend))):
+        # Corrupt/one-sided book (e.g. NaN mid or NaN depth/size): force a
+        # stand-aside reading. A NaN toxicity must fail SAFE to TOXIC — a
+        # silent RANGE would drop the safety veto on a broken book.
         return {"mid": mid, "spread_ticks": spread_ticks, "order_flow_imbalance": 0.0,
                 "depth_imbalance": 0.0, "toxicity": 1.0, "trade_intensity": 0.0,
                 "blend": 0.0, "corrupt": True}

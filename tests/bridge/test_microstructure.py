@@ -1,15 +1,19 @@
 """System-1 perception: signals and heuristic regime are correct and bounded."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 
 from kairos.bridge.microstructure import (
+    LearnedRegime,
     MicrostructureConfig,
     heuristic_regime,
     percept_from_window,
     raw_signals,
 )
 from kairos.bridge.percept import BEAR, BULL
+from kairos.perception.models.embedder import NumpyEncoder
 from kairos.perception.schema import Regime
 from kairos.perception.synthetic.generate import generate
 
@@ -46,6 +50,45 @@ def test_corrupt_book_forces_toxic_standaside():
     assert regime == int(Regime.TOXIC)
     p = percept_from_window(df.tail(32), "X", ts=float(df.iloc[-2]["ts"]))
     assert p.is_toxic and p.direction_strength == 0.0  # no direction in TOXIC
+
+
+def test_corrupt_size_forces_toxic_standaside():
+    # A finite mid with NaN depth/size yields a NaN toxicity; it must fail SAFE
+    # to TOXIC, not silently read as RANGE and drop the safety veto.
+    cfg = MicrostructureConfig()
+    df = _window("calm").copy()
+    df.iloc[-1, df.columns.get_loc("bid_sz_0")] = np.nan  # mid stays finite
+    sig = raw_signals(df.tail(32), cfg)
+    assert sig["corrupt"] and np.isfinite(sig["toxicity"]) and sig["toxicity"] == 1.0
+    regime, _, _ = heuristic_regime(sig, cfg)
+    assert regime == int(Regime.TOXIC)
+    p = percept_from_window(df.tail(32), "X", ts=float(df.iloc[-2]["ts"]))
+    assert p.is_toxic and p.direction_strength == 0.0
+
+
+class _NaNEncoder(NumpyEncoder):
+    """NumpyEncoder whose forward pass emits a non-finite embedding (no weights)."""
+
+    def __init__(self):
+        pass
+
+    def encode(self, X):
+        return np.full((np.asarray(X).shape[0], 4), np.nan, dtype=np.float32)
+
+
+def test_learned_regime_fails_safe_on_nonfinite_feature():
+    # Corrupt size -> non-finite featurized row -> TOXIC before the encoder runs.
+    df = _window("calm", 64).copy()
+    df.iloc[-1, df.columns.get_loc("bid_sz_0")] = np.nan
+    predictor = SimpleNamespace(model=_NaNEncoder(), stats={"mu": 0.0, "sd": 1.0})
+    assert LearnedRegime(predictor)(df, {}) == (int(Regime.TOXIC), 1.0, "learned")
+
+
+def test_learned_regime_fails_safe_on_nonfinite_embedding():
+    # Finite features but a non-finite embedding -> TOXIC (never a confident wrong read).
+    df = _window("calm", 64)
+    predictor = SimpleNamespace(model=_NaNEncoder(), stats={"mu": 0.0, "sd": 1.0})
+    assert LearnedRegime(predictor)(df, {}) == (int(Regime.TOXIC), 1.0, "learned")
 
 
 def test_toxic_regime_has_no_direction():
