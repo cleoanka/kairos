@@ -46,6 +46,29 @@ def test_load_predictor_degrades_gracefully():
     assert isinstance(src, str) and isinstance(is_real, bool)
 
 
+def test_load_predictor_honours_real_flag(monkeypatch):
+    # `--live` without `--real` must NOT pick the real-Bybit model even when a
+    # loadable one exists: the flag serve_live threads in is honoured, not
+    # ignored. Stub a *loadable* real model so only the flag decides the branch.
+    import kairos.perception.stream as stream
+
+    monkeypatch.setattr("kairos.perception.real.has_real_model", lambda: True)
+    monkeypatch.setattr(
+        "kairos.perception.regime.predict.RegimePredictor.load",
+        classmethod(lambda cls, *a, **k: object()),
+    )
+
+    # real=True reaches the real branch (proves the stub is loadable) …
+    _, src_real, is_real = stream._load_predictor(real=True)
+    assert is_real is True
+    assert src_real == "real-Bybit-trained"
+
+    # … real=False skips it despite the loadable real model being present.
+    _, src_syn, is_syn = stream._load_predictor(real=False)
+    assert is_syn is False
+    assert src_syn != "real-Bybit-trained"
+
+
 def test_inference_failure_fails_safe_to_toxic():
     # A broken live inference must NOT silently pick RANGE (regime 0, the least
     # cautious): it must fail SAFE to TOXIC — mirroring the bridge's non-finite

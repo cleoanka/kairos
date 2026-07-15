@@ -318,11 +318,15 @@ class _Handler(BaseHTTPRequestHandler):
                 _active_streams -= 1
 
 
-def _load_predictor():
-    """Live data → prefer the real-Bybit-trained model; fall back to synthetic."""
+def _load_predictor(real: bool = True):
+    """Live data → prefer the real-Bybit-trained model; fall back to synthetic.
+
+    ``real=False`` forbids the real-model preference (mirrors the non-live
+    ``build_dashboard_data`` gating), so ``--live`` without ``--real`` runs the
+    synthetic-trained model even when a real one is present."""
     from .real import has_real_model, real_model_paths
     from .regime.predict import RegimePredictor
-    if has_real_model():
+    if real and has_real_model():
         try:
             return RegimePredictor.load(*real_model_paths()), "real-Bybit-trained", True
         except Exception:
@@ -339,7 +343,7 @@ def serve_live(port: int = 8000, symbol: str = "BTCUSDT", real: bool = True,
                open_browser: bool = True) -> int:
     global STREAM
     from .web.build import _load_metrics
-    predictor, src, is_real = _load_predictor()
+    predictor, src, is_real = _load_predictor(real)
     STREAM = _Stream(predictor, _load_metrics(is_real), src)
     STREAM.want = symbol if symbol in SYMBOLS else SYMBOLS[0]
     STREAM.symbol = STREAM.want
