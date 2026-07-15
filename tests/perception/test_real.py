@@ -46,4 +46,4 @@ def test_build_real_model_round_trip(tmp_path, monkeypatch):
     X, _ = featurize(df)
     pred = p.predict_features(X)
     assert pred.shape == (len(df),)
-    assert set(int(v) for v in pred) <= {0, 1, 2}
+    assert {int(v) for v in pred} <= {0, 1, 2}

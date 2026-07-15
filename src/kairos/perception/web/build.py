@@ -8,6 +8,7 @@ trading path (Constitution Rule 3).
 """
 from __future__ import annotations
 
+import contextlib
 import functools
 import http.server
 import json
@@ -168,10 +169,8 @@ def serve(port: int = 8000, n: int = 500, seed: int = 4, open_browser: bool = Tr
         url = f"http://127.0.0.1:{port}/"
         print(f"\n  LOB-Core dashboard > {url}\n  (Ctrl+C to stop)\n")
         if open_browser:
-            try:
+            with contextlib.suppress(Exception):
                 webbrowser.open(url)
-            except Exception:
-                pass
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
