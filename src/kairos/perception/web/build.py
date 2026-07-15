@@ -91,21 +91,30 @@ def build_dashboard_data(n: int = 500, seed: int = 4, real: bool = False) -> dic
         d = _drifts[i]
         return 1 if d > _thr else (-1 if d < -_thr else 0)
 
+    # Pull every column the loop reads to contiguous numpy once, so each snapshot
+    # is a cheap row slice instead of a fresh `df.iloc[i]` Series + label lookups.
+    def _cols(prefix: str) -> np.ndarray:
+        return df[[f"{prefix}_{k}" for k in range(N_LEVELS)]].to_numpy()
+    mid = df["mid"].to_numpy()
+    bpx, bsz = _cols("bid_px"), _cols("bid_sz")
+    apx, asz = _cols("ask_px"), _cols("ask_sz")
+    cxl = (df[[f"bid_cxl_{k}" for k in range(N_LEVELS)]].to_numpy()
+           + df[[f"ask_cxl_{k}" for k in range(N_LEVELS)]].to_numpy()).sum(axis=1)
+    tf = df["trade_buy"].to_numpy() - df["trade_sell"].to_numpy()
+
     snaps = []
     for i in range(len(df)):
-        row = df.iloc[i]
         rp = int(predicted[i]) if predicted is not None else int(regime_gt[i])
         rt = rp if use_real else int(regime_gt[i])   # no ground truth on real markets
         snaps.append({
             "dir": _dir(i),
-            "mid": round(float(row["mid"]), 2),
-            "bpx": [round(float(row[f"bid_px_{k}"]), 1) for k in range(N_LEVELS)],
-            "bsz": [round(float(row[f"bid_sz_{k}"]), 1) for k in range(N_LEVELS)],
-            "apx": [round(float(row[f"ask_px_{k}"]), 1) for k in range(N_LEVELS)],
-            "asz": [round(float(row[f"ask_sz_{k}"]), 1) for k in range(N_LEVELS)],
-            "cxl": round(sum(float(row[f"bid_cxl_{k}"]) + float(row[f"ask_cxl_{k}"])
-                             for k in range(N_LEVELS)), 1),
-            "tf": round(float(row["trade_buy"] - row["trade_sell"]), 1),
+            "mid": round(float(mid[i]), 2),
+            "bpx": [round(float(v), 1) for v in bpx[i]],
+            "bsz": [round(float(v), 1) for v in bsz[i]],
+            "apx": [round(float(v), 1) for v in apx[i]],
+            "asz": [round(float(v), 1) for v in asz[i]],
+            "cxl": round(float(cxl[i]), 1),
+            "tf": round(float(tf[i]), 1),
             "rt": rt, "rp": rp,
             "pnl": round(float(pnl[i]), 1) if i < len(pnl) else 0.0,
             "inv": round(float(inv[i]), 2) if i < len(inv) else 0.0,
