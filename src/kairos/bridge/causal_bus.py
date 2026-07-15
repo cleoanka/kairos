@@ -216,7 +216,25 @@ class CausalPerceptionBus:
 
     def aggregate_before(self, query, horizon: float) -> dict | None:
         """Summarise percepts in ``(cutoff - horizon, cutoff]`` — a causal
-        rolling read of the recent regime distribution and mean flow."""
+        rolling read of the recent regime distribution and mean flow.
+
+        The ``horizon`` is validated at the bus, so the guarantee holds for every
+        caller (not just the tool layer). A non-finite horizon can't scope a
+        window — ``+inf`` widens ``(cutoff - horizon, cutoff]`` to the whole
+        causal history and ``NaN`` makes ``cutoff - horizon`` NaN so ``bisect``
+        lands past the end and empties it — so we reject it (a ``ValueError`` the
+        tool layer already catches, mirroring :meth:`record`'s non-finite guard).
+        A non-positive horizon describes an empty look-back, so we fail closed to
+        ``None`` ("perception unavailable") rather than return a degenerate read.
+        """
+        if not math.isfinite(horizon):
+            raise ValueError(
+                f"non-finite horizon {horizon}. A NaN/inf look-back cannot scope a "
+                "causal window: it would silently return the whole history (+inf) or "
+                "an empty one (NaN) instead of the intended recent regime read."
+            )
+        if horizon <= 0:
+            return None
         cutoff = self._cutoff(query)
         hi = bisect.bisect_right(self._ts, cutoff)
         lo = bisect.bisect_right(self._ts, cutoff - horizon)

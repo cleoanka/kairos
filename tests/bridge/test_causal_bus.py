@@ -89,6 +89,30 @@ def test_aggregate_before_is_causal():
     assert bus.aggregate_before(-1.0, horizon=5.0) is None
 
 
+def test_aggregate_before_rejects_non_finite_horizon():
+    """A non-finite horizon can't scope a window — +inf spans the whole causal
+    history, NaN empties it — so the bus rejects it for EVERY caller, not just
+    the tool layer. The ValueError is what the tool already fails closed on."""
+    bus = CausalPerceptionBus()
+    for t in range(0, 100):
+        bus.record(make_percept(float(t), regime=t % 3))
+    for bad in (float("inf"), float("-inf"), float("nan")):
+        with pytest.raises(ValueError, match="non-finite horizon"):
+            bus.aggregate_before(80.0, bad)
+
+
+def test_aggregate_before_non_positive_horizon_is_unavailable():
+    """A non-positive look-back describes an empty window: fail closed to None
+    ("perception unavailable") rather than return a degenerate read."""
+    bus = CausalPerceptionBus()
+    for t in range(0, 100):
+        bus.record(make_percept(float(t), regime=t % 3))
+    assert bus.aggregate_before(80.0, 0.0) is None
+    assert bus.aggregate_before(80.0, -5.0) is None
+    # A valid positive horizon is unaffected — the recent window still reads.
+    assert bus.aggregate_before(80.0, 20.0) is not None
+
+
 def test_out_of_order_record_rejected():
     bus = CausalPerceptionBus()
     bus.record(make_percept(5.0))
