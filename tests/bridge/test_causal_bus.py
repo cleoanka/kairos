@@ -13,6 +13,7 @@ import pytest
 from kairos.bridge.causal_bus import (
     CausalPerceptionBus,
     ClockDomainError,
+    LookAheadError,
     infer_clock,
     resolve_cutoff,
     to_epoch,
@@ -181,3 +182,70 @@ def test_empty_bus_returns_none_not_error():
     assert bus.window_before(123.0) == []
     assert bus.aggregate_before(123.0, 10.0) is None
     assert len(bus) == 0
+
+
+# --- Non-finite cutoffs: the NaN look-ahead hole (regression) ----------------
+# A NaN cutoff is uniquely dangerous: every `x < nan` is False, so bisect lands
+# past the end and as_of would return the NEWEST percept — maximal look-ahead —
+# with the strict `p.ts > cutoff` guard also bypassed (`x > nan` is False).
+# +inf returns the newest percept too; -inf empties every window. All must fail
+# closed rather than silently leak. See resolve_cutoff._require_finite.
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_resolve_cutoff_rejects_non_finite_number(bad):
+    with pytest.raises(LookAheadError):
+        resolve_cutoff(bad)
+
+
+@pytest.mark.parametrize("bad", ["nan", "NaN", "inf", "-inf", "  nan  ", "Infinity"])
+def test_resolve_cutoff_rejects_non_finite_string(bad):
+    # The stringified forms float()-parse; they must be rejected, NOT re-read as
+    # a date (which would raise a confusing ValueError from fromisoformat).
+    with pytest.raises(LookAheadError):
+        resolve_cutoff(bad)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), "nan", "inf"])
+def test_as_of_rejects_non_finite_query_instead_of_leaking(bad):
+    bus = CausalPerceptionBus()
+    for t in range(0, 10):
+        bus.record(make_percept(float(t)))
+    with pytest.raises(LookAheadError):
+        bus.as_of(bad)
+    with pytest.raises(LookAheadError):
+        bus.window_before(bad, 10)
+    with pytest.raises(LookAheadError):
+        bus.aggregate_before(bad, 5.0)
+
+
+def test_as_of_non_finite_on_epoch_clock_also_rejected():
+    # Same guarantee on a realistic wall-clock bus (not just the index clock).
+    bus = CausalPerceptionBus()
+    base = 1_700_000_000.0
+    for h in range(10):
+        bus.record(make_percept(base + h * 3600))
+    with pytest.raises(LookAheadError):
+        bus.as_of(float("nan"))
+    with pytest.raises(LookAheadError):
+        bus.as_of("nan")
+
+
+def test_record_rejects_non_finite_ts():
+    bus = CausalPerceptionBus()
+    with pytest.raises(ValueError, match="non-finite"):
+        bus.record(make_percept(float("nan")))
+    with pytest.raises(ValueError, match="non-finite"):
+        bus.record(make_percept(float("inf")))
+    # A NaN first ts must not poison clock inference or the ordering guard.
+    assert bus.clock is None
+    assert len(bus) == 0
+
+
+def test_non_finite_never_poisons_a_populated_bus():
+    # Regression for the record() bypass: a NaN ts slips past `ts < last` (that
+    # comparison is False), so without the guard it would append out of order.
+    bus = CausalPerceptionBus()
+    bus.record(make_percept(5.0))
+    with pytest.raises(ValueError, match="non-finite"):
+        bus.record(make_percept(float("nan")))
+    assert [p.ts for p in bus.window_before(1e9, 10)] == [5.0]

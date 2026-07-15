@@ -15,7 +15,7 @@ from typing import Annotated
 
 from langchain_core.tools import tool
 
-from .causal_bus import CausalPerceptionBus
+from .causal_bus import CausalPerceptionBus, LookAheadError
 
 # Active bus registry, set by the trading graph before a run (mirrors how the
 # reasoning dataflows read a process-global config via ``set_config``).
@@ -61,7 +61,13 @@ def get_microstructure_regime(
     bus = _bus_for(symbol)
     if bus is None:
         return _UNAVAILABLE.format(symbol=symbol, curr_date=curr_date)
-    p = bus.as_of(curr_date)
+    try:
+        p = bus.as_of(curr_date)
+    except (LookAheadError, ValueError, TypeError):
+        # An unresolvable or non-finite cutoff (a malformed date, "nan", inf)
+        # must fail closed: report no perception rather than raise into the
+        # agent — and never leak or fabricate a regime.
+        return _UNAVAILABLE.format(symbol=symbol, curr_date=curr_date)
     if p is None:
         return _UNAVAILABLE.format(symbol=symbol, curr_date=curr_date)
     return p.to_prompt()
@@ -84,7 +90,10 @@ def get_order_flow_state(
     bus = _bus_for(symbol)
     if bus is None:
         return _UNAVAILABLE.format(symbol=symbol, curr_date=curr_date)
-    agg = bus.aggregate_before(curr_date, lookback_seconds)
+    try:
+        agg = bus.aggregate_before(curr_date, lookback_seconds)
+    except (LookAheadError, ValueError, TypeError):
+        return _UNAVAILABLE.format(symbol=symbol, curr_date=curr_date)
     if agg is None:
         return _UNAVAILABLE.format(symbol=symbol, curr_date=curr_date)
     dist = ", ".join(f"{k}={v}" for k, v in agg["regime_distribution"].items())

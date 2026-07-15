@@ -67,6 +67,17 @@ def test_tool_without_registered_bus_is_safe():
     assert "unavailable" in out.lower()
 
 
+@pytest.mark.parametrize("bad_date", ["nan", "inf", "-inf", "not-a-date"])
+def test_tool_fails_closed_on_unresolvable_cutoff(bus, bad_date):
+    # An LLM (or a corrupt date field) handing "nan"/"inf"/garbage as curr_date
+    # must NOT leak the newest percept and must NOT raise into the agent — it
+    # degrades to the explicit unavailable message.
+    out = get_microstructure_regime.invoke({"symbol": "BTCUSDT", "curr_date": bad_date})
+    assert "unavailable" in out.lower()
+    agg = get_order_flow_state.invoke({"symbol": "BTCUSDT", "curr_date": bad_date})
+    assert "unavailable" in agg.lower()
+
+
 def test_initial_state_seeds_microstructure_report():
     from kairos.reasoning.graph.propagation import Propagator
     state = Propagator().create_initial_state("BTCUSDT", "700.0", asset_type="crypto")
