@@ -3,7 +3,7 @@
     kairos version
     kairos loop      [--scenario toxic|calm|range] [--mode deterministic|llm] [--steps N]
     kairos perceive  <perception subcommand ...>   # System-1 (LOB-Core): gen/train/cluster/backtest/web/...
-    kairos reason    <TICKER> <YYYY-MM-DD>          # System-2 (TradingAgents) — needs [reasoning]
+    kairos reason    <TICKER> <YYYY-MM-DD> [--json]  # System-2 (TradingAgents) — needs [reasoning]
     kairos web       [--live] [--port N]            # live regime dashboard
     kairos soul-check                               # the unified Constitution enforcer
     kairos reproduce                                # end-to-end reproducibility gate
@@ -80,6 +80,24 @@ def _delegate_perceive(rest: list[str]) -> int:
     return int(perception_main(rest) or 0)
 
 
+def _valid_date(value: str) -> str:
+    """argparse ``type=`` for the reason date: YYYY-MM-DD, not in the future.
+
+    Mirrors the interactive path (reasoning_cli) so a bad date fails fast with a
+    clean CLI error (exit 2) before any LLM/API-key setup, rather than surfacing
+    an unrelated 'API key not set' error deep in propagation.
+    """
+    from datetime import date, datetime
+
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid date {value!r}: use YYYY-MM-DD") from None
+    if parsed > date.today():
+        raise argparse.ArgumentTypeError(f"date {value!r} is in the future")
+    return value
+
+
 def _cmd_reason(args) -> int:
     try:
         from kairos.reasoning.default_config import DEFAULT_CONFIG
@@ -90,7 +108,11 @@ def _cmd_reason(args) -> int:
         return 2
     ta = TradingAgentsGraph(debug=args.debug, config=DEFAULT_CONFIG.copy())
     _, decision = ta.propagate(args.ticker, args.date, asset_type=args.asset_type)
-    print(decision)
+    if args.json:
+        print(json.dumps({"ticker": args.ticker, "date": args.date,
+                          "asset_type": args.asset_type, "decision": decision}, default=str))
+    else:
+        print(decision)
     return 0
 
 
@@ -105,20 +127,34 @@ def _cmd_web(args) -> int:
     return int(perception_main(argv) or 0)
 
 
-def _cmd_soul(args) -> int:
+def _run_source_script(name: str, command: str) -> int:
+    """Run a scripts/ audit tool, or explain that it needs a source checkout.
+
+    ``scripts/`` (and the src/tests/ trees these tools scan) is not shipped in
+    the installed wheel, so from a `pip install`ed kairos the script is absent;
+    detect that and print a clear message with exit 2 rather than letting
+    subprocess emit a raw file-not-found.
+    """
     import subprocess
     from pathlib import Path
 
-    script = Path(__file__).resolve().parents[2] / "scripts" / "soul_check.py"
+    script = Path(__file__).resolve().parents[2] / "scripts" / name
+    if not script.is_file():
+        print(f"`kairos {command}` is only available from a source checkout: {script} is missing.\n"
+              "  It audits the on-disk src/tests/scripts trees, which are not shipped in the "
+              "installed wheel.\n"
+              "  Clone the repo (github.com/cleoanka/kairos) and run it from there.",
+              file=sys.stderr)
+        return 2
     return subprocess.call([sys.executable, str(script)])
+
+
+def _cmd_soul(args) -> int:
+    return _run_source_script("soul_check.py", "soul-check")
 
 
 def _cmd_reproduce(args) -> int:
-    import subprocess
-    from pathlib import Path
-
-    script = Path(__file__).resolve().parents[2] / "scripts" / "reproduce.py"
-    return subprocess.call([sys.executable, str(script)])
+    return _run_source_script("reproduce.py", "reproduce")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -148,9 +184,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     re = sub.add_parser("reason", help="System-2 (TradingAgents) decision for a ticker/date")
     re.add_argument("ticker")
-    re.add_argument("date")
+    re.add_argument("date", type=_valid_date, help="analysis date YYYY-MM-DD (not in the future)")
     re.add_argument("--asset-type", default="stock", choices=["stock", "crypto"])
     re.add_argument("--debug", action="store_true")
+    re.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     re.set_defaults(func=_cmd_reason)
 
     wb = sub.add_parser("web", help="serve the live regime dashboard")
