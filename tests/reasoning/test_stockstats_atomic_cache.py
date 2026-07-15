@@ -82,6 +82,38 @@ class TestLoadOhlcvAtomicCache(unittest.TestCase):
         cache_file = [f for f in os.listdir(self._tmp) if not f.endswith(".tmp")]
         self.assertEqual(cache_file, [])  # no truncated frame at the cache path
 
+    def test_failed_to_csv_leaves_no_tmp_and_preserves_cache(self):
+        # If to_csv raises mid-write, the staged temp must be unlinked (never
+        # orphaned — its unique pid+uuid suffix means nothing reclaims it) and
+        # an unrelated pre-existing cache file must be left exactly as it was.
+        preexisting = os.path.join(self._tmp, "MSFT-YFin-data-old.csv")
+        with open(preexisting, "w", encoding="utf-8") as fh:
+            fh.write("Date,Close\n2026-01-02,42.0\n")
+        before = open(preexisting, encoding="utf-8").read()  # noqa: SIM115
+
+        # AAPL is a cache miss, so load_ohlcv fetches and stages a temp write.
+        # Emulate to_csv partially flushing the temp file (disk full) then
+        # raising, so the leak path is genuinely exercised: without cleanup the
+        # half-written .tmp would survive.
+        def partial_then_fail(_self, path, *args, **kwargs):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("Date,Close\n2026-04-01,")  # truncated mid-row
+            raise OSError("no space left on device")
+
+        with mock.patch.object(stockstats_utils.yf, "download", return_value=_ohlcv()), \
+                mock.patch.object(
+                    stockstats_utils.pd.DataFrame, "to_csv", autospec=True,
+                    side_effect=partial_then_fail
+                ), \
+                self.assertRaises(OSError):
+            stockstats_utils.load_ohlcv("AAPL", "2026-04-10")
+
+        # No .tmp orphan survives the failed write.
+        self.assertEqual([f for f in os.listdir(self._tmp) if f.endswith(".tmp")], [])
+        # The unrelated pre-existing cache is untouched, byte-for-byte.
+        self.assertEqual(os.listdir(self._tmp), ["MSFT-YFin-data-old.csv"])
+        self.assertEqual(open(preexisting, encoding="utf-8").read(), before)  # noqa: SIM115
+
 
 if __name__ == "__main__":
     unittest.main()

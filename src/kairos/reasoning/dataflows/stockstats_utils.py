@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 import time
@@ -182,9 +183,17 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
         # or the fully-written new one, never a half-flushed frame. The temp
         # name carries a pid+uuid suffix so parallel writers don't collide on
         # it either, and os.replace is atomic within the same directory.
+        # Clean up the staged temp on any failure (to_csv partial write, the
+        # replace itself) so a crash mid-write can't orphan a .tmp — its unique
+        # pid+uuid suffix means nothing else would ever reclaim it.
         tmp_file = f"{data_file}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
-        downloaded.to_csv(tmp_file, index=False, encoding="utf-8")
-        os.replace(tmp_file, data_file)
+        try:
+            downloaded.to_csv(tmp_file, index=False, encoding="utf-8")
+            os.replace(tmp_file, data_file)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.remove(tmp_file)
+            raise
         data = downloaded
 
     data = _clean_dataframe(data)
