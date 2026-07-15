@@ -6,8 +6,7 @@ import pytest
 import kairos.bridge.execution_link as el
 from kairos.bridge import Decision
 from kairos.bridge.percept import BEAR, BULL, NEUTRAL
-from kairos.loop import LoopConfig, deterministic_policy, run_cognitive_loop
-from kairos.loop import cognitive_loop as cl
+from kairos.loop import LoopConfig, cognitive_loop as cl, deterministic_policy, run_cognitive_loop
 from kairos.loop.cognitive_loop import _reflect  # noqa: F401 (import smoke)
 
 

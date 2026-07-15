@@ -36,6 +36,5 @@ def test_loop_without_learned_never_loads_backend():
 def test_learned_propagates_other_errors():
     """Only the missing-artifact case is caught; real bugs still surface."""
     with mock.patch("kairos.perception.regime.predict.RegimePredictor.load",
-                    side_effect=ValueError("corrupt weights")):
-        with pytest.raises(ValueError):
-            cli.main(["loop", "--learned", "--steps", "50"])
+                    side_effect=ValueError("corrupt weights")), pytest.raises(ValueError):
+        cli.main(["loop", "--learned", "--steps", "50"])
