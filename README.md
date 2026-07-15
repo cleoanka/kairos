@@ -84,9 +84,9 @@ Kairos cognitive loop — BTCUSDT (scenario=range, mode=deterministic)
   System-1 percept : RANGE / NEUTRAL (conf 93%, tox 0.00)
   System-2 stance  : HOLD @ conviction 0.00 (source=deterministic-policy)
   Execution        : PnL +893.1, 895 fills, inv -9.00, halted=False
-  System-1 veto    : 0% of the window perceived TOXIC
-  Edge vs stand-aside: +0.0
-  Baselines        : stand_aside=+893, naive_long=+86, pure_market_making=+893
+  System-1 veto    : 0% of the window perceived TOXIC (dominated=False)
+  Edge vs stand-aside: +893.1
+  Baselines        : stand_aside=+0, naive_long=+86, pure_market_making=+893
 ```
 
 ## 📦 Installation
@@ -257,7 +257,7 @@ src/kairos/
 src/cpp, src/bindings   C++ zero-copy ring
 scripts/         soul_check.py · reproduce.py · make_readme_figures.py · build_cpp.sh
 docs/            ARCHITECTURE · PHILOSOPHY · CAUSALITY · HOW_IT_WORKS  (+ images/)
-tests/           bridge · loop · perception · reasoning   (598 passing, 14 skipped)
+tests/           bridge · loop · perception · reasoning   (656 passing, 14 skipped)
 ```
 
 ## 📚 Documentation

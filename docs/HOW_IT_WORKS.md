@@ -105,14 +105,14 @@ Kairos cognitive loop — BTCUSDT (scenario=toxic, mode=deterministic)
   System-2 stance  : BUY @ conviction 0.67 (source=deterministic-policy)
   Execution        : PnL +464.5, 207 fills, inv +7.59, halted=False
   System-1 veto    : 28% of the window perceived TOXIC (dominated=False)
-  Edge vs stand-aside: +1547.7
-  Baselines        : stand_aside=-1083, naive_long=+1032, pure_market_making=-1083
+  Edge vs stand-aside: +464.5
+  Baselines        : stand_aside=+0, naive_long=+1032, pure_market_making=-1083
 ```
 
-> **Read this honestly.** On this *trending* toxic scenario the loop beats
-> standing aside (+1547) but **not** naive-always-long (+1032): the market
-> trends up, so pure directional exposure wins, and a market maker pays adverse
-> selection. That is a property of a trending market, not a bug. Kairos's
+> **Read this honestly.** On this *trending* toxic scenario the loop earns
+> +464.5, so it beats standing flat aside (its edge over doing nothing is
+> +464.5) but **not** naive-always-long (+1032): the market trends up, so pure
+> directional exposure wins, and a market maker pays adverse selection. That is a property of a trending market, not a bug. Kairos's
 > measured edge is on **benign (range) markets** — run `--scenario range` and
 > the loop captures spread (~+850) while naive-long earns almost nothing (~+80),
 > across every seed. The value here is *regime-adaptivity and causal safety*, not
