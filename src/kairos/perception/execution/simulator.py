@@ -15,11 +15,11 @@ import math
 import numpy as np
 
 from ..schema import REGIME_NAMES, Regime
-from ..strategy.maker import MakerStrategy, Quote
+from ..strategy.maker import Maker, MakerStrategy, Quote
 from .risk import RiskGate
 
 
-def run_backtest(df, strategy: MakerStrategy | None = None,
+def run_backtest(df, strategy: Maker | None = None,
                  risk: RiskGate | None = None) -> dict:
     strategy = strategy or MakerStrategy()
     risk = risk or RiskGate()
