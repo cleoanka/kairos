@@ -55,10 +55,65 @@ def test_microstructure_tool_reads_bus_causally(bus):
 
 def test_order_flow_tool_summarizes_recent_window(bus):
     out = get_order_flow_state.invoke(
-        {"symbol": "BTCUSDT", "curr_date": "1000.0", "lookback_seconds": 500.0}
+        {"symbol": "BTCUSDT", "curr_date": "1000.0", "lookback": 500.0}
     )
     assert "ORDER-FLOW STATE" in out
     assert "Dominant regime" in out
+
+
+def test_order_flow_labels_horizon_in_bus_clock_unit(bus):
+    # The integration bus is index-clocked (ts = step index), so "seconds" are
+    # meaningless: the header must state the unit as steps, never a false "…s".
+    assert bus.clock == "index"
+    out = get_order_flow_state.invoke(
+        {"symbol": "BTCUSDT", "curr_date": "1000.0", "lookback": 40.0}
+    )
+    assert "last 40steps]" in out
+    assert "40s]" not in out
+
+
+def test_order_flow_default_horizon_is_recent_on_index_clock(bus):
+    # Regression for the silent full-history window: on an index clock the default
+    # horizon must scope a *recent* slice, not sweep every percept at-or-before the
+    # cutoff (which is what a 3600-"second" horizon did on index steps).
+    default = get_order_flow_state.invoke({"symbol": "BTCUSDT", "curr_date": "1000.0"})
+    whole = get_order_flow_state.invoke(
+        {"symbol": "BTCUSDT", "curr_date": "1000.0", "lookback": 1e9}
+    )
+    def observed(text):
+        line = next(ln for ln in text.splitlines() if "Percepts observed" in ln)
+        return int(line.split(":")[1].split("(")[0])
+    n_default, n_whole = observed(default), observed(whole)
+    assert 0 < n_default < n_whole, (n_default, n_whole)
+
+
+@pytest.mark.parametrize("bad_horizon", [float("inf"), float("nan"), 0.0, -10.0])
+def test_order_flow_fails_closed_on_bad_horizon(bus, bad_horizon):
+    # A non-finite or non-positive lookback can't scope a window (inf spans the
+    # whole history, ≤0 empties it): fail closed to "unavailable", never silently
+    # mis-scope the rolling read the analyst reasons over.
+    out = get_order_flow_state.invoke(
+        {"symbol": "BTCUSDT", "curr_date": "1000.0", "lookback": bad_horizon}
+    )
+    assert "unavailable" in out.lower()
+
+
+def test_clear_perception_bus_is_identity_safe():
+    # Two overlapping same-symbol runs: run A's clear must not evict run B's live
+    # bus. clear_perception_bus only pops the exact object it was handed.
+    from kairos.bridge.microstructure_tools import _bus_for, clear_perception_bus
+
+    clear_perception_bus()
+    df = generate(n_steps=400, seed=1, scenario="toxic")
+    bus_a = build_causal_bus(df, "BTCUSDT", window=64, step=8)
+    bus_b = build_causal_bus(df, "BTCUSDT", window=64, step=8)
+    set_perception_bus(bus_a, symbol="BTCUSDT")
+    set_perception_bus(bus_b, symbol="BTCUSDT")  # B is now the live bus
+    clear_perception_bus("BTCUSDT", bus_a)       # A's stale finally
+    assert _bus_for("BTCUSDT") is bus_b, "B's live bus was clobbered by A's clear"
+    clear_perception_bus("BTCUSDT", bus_b)
+    assert _bus_for("BTCUSDT") is None
+    clear_perception_bus()
 
 
 def test_tool_without_registered_bus_is_safe():
