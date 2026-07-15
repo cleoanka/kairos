@@ -1,6 +1,8 @@
 """System-1 perception: signals and heuristic regime are correct and bounded."""
 from __future__ import annotations
 
+import math
+import struct
 from types import SimpleNamespace
 
 import numpy as np
@@ -14,12 +16,58 @@ from kairos.bridge.microstructure import (
 )
 from kairos.bridge.percept import BEAR, BULL
 from kairos.perception.models.embedder import NumpyEncoder
-from kairos.perception.schema import Regime
+from kairos.perception.schema import N_LEVELS, Regime
 from kairos.perception.synthetic.generate import generate
 
 
 def _window(scenario: str, n: int = 400):
     return generate(n_steps=n, seed=3, scenario=scenario)
+
+
+def _raw_signals_scalar(window, cfg):
+    """Reference scalar implementation of :func:`raw_signals` (pre-numpy path).
+
+    Kept verbatim as the equivalence oracle: the numpy-first kernel must stay
+    bit-for-bit identical to this per-column pandas computation.
+    """
+    n = len(window)
+    last = window.iloc[-1]
+    mid = float(last["mid"])
+    best_bid_off = float(last["bid_px_0"])
+    best_ask_off = float(last["ask_px_0"])
+    spread_ticks = best_bid_off + best_ask_off
+    bid_depth = float(sum(last[f"bid_sz_{i}"] for i in range(N_LEVELS)))
+    ask_depth = float(sum(last[f"ask_sz_{i}"] for i in range(N_LEVELS)))
+    rest = bid_depth + ask_depth
+    depth_imbalance = (bid_depth - ask_depth) / rest if rest > 1e-9 else 0.0
+    buy = float(window["trade_buy"].sum())
+    sell = float(window["trade_sell"].sum())
+    flow = buy + sell
+    ofi = (buy - sell) / flow if flow > 1e-9 else 0.0
+    cxl = float(sum(window[f"bid_cxl_{i}"].sum() + window[f"ask_cxl_{i}"].sum()
+                    for i in range(N_LEVELS)))
+    avg_cxl = cxl / max(n, 1)
+    toxicity = avg_cxl / (avg_cxl + rest + 1e-9)
+    trades = float(window["trade_n"].sum())
+    trade_intensity = 1.0 - math.exp(-trades / (max(n, 1) * cfg.intensity_scale))
+    blend = cfg.ofi_weight * ofi + (1.0 - cfg.ofi_weight) * depth_imbalance
+    if not all(map(math.isfinite, (mid, spread_ticks, toxicity, blend))):
+        return {"mid": mid, "spread_ticks": spread_ticks, "order_flow_imbalance": 0.0,
+                "depth_imbalance": 0.0, "toxicity": 1.0, "trade_intensity": 0.0,
+                "blend": 0.0, "corrupt": True}
+    return {
+        "mid": mid, "spread_ticks": max(spread_ticks, 0.0),
+        "order_flow_imbalance": float(np.clip(ofi, -1.0, 1.0)),
+        "depth_imbalance": float(np.clip(depth_imbalance, -1.0, 1.0)),
+        "toxicity": float(np.clip(toxicity, 0.0, 1.0)),
+        "trade_intensity": float(np.clip(trade_intensity, 0.0, 1.0)),
+        "blend": float(np.clip(blend, -1.0, 1.0)), "corrupt": False,
+    }
+
+
+def _bits(x) -> bytes:
+    """Raw IEEE-754 bytes so NaN compares equal to NaN and every ULP counts."""
+    return struct.pack("<d", float(x))
 
 
 def test_signals_are_finite_and_bounded():
@@ -123,3 +171,47 @@ def test_percept_prompt_is_deterministic_and_priceforecast_free():
     assert "NVDA" in text and "Regime" in text
     # It reports state, not a price forecast.
     assert "target" not in text.lower() and "forecast" not in text.lower()
+
+
+def test_raw_signals_pins_exact_values():
+    # Golden values guard the numpy-first kernel: any drift in the arithmetic
+    # (summation order, clipping, corrupt guard) trips these exact assertions.
+    cfg = MicrostructureConfig()
+    expected = {
+        "toxic": {"mid": 10241.0, "spread_ticks": 2.0,
+                  "order_flow_imbalance": 0.9961463240574414,
+                  "depth_imbalance": -0.06768078764862867,
+                  "toxicity": 0.4004591020790868,
+                  "trade_intensity": 0.10009740563654379,
+                  "blend": 0.5706154793750133, "corrupt": False},
+        "range": {"mid": 10000.0, "spread_ticks": 2.0,
+                  "order_flow_imbalance": -0.3221317428020152,
+                  "depth_imbalance": 0.0011284154476404445,
+                  "toxicity": 0.0, "trade_intensity": 0.05506640613514391,
+                  "blend": -0.19282767950215293, "corrupt": False},
+    }
+    for scenario, want in expected.items():
+        sig = raw_signals(_window(scenario).tail(64), cfg)
+        assert sig.keys() == want.keys()
+        for key, value in want.items():
+            if isinstance(value, bool):
+                assert sig[key] is value, (scenario, key)
+            else:
+                assert _bits(sig[key]) == _bits(value), (scenario, key)  # bit-exact
+
+
+def test_raw_signals_is_bit_identical_to_scalar_reference():
+    # The numpy-first path must reproduce the pandas per-column path byte-for-byte
+    # over a full trailing-window percept stream, corrupt rows included.
+    cfg = MicrostructureConfig()
+    for scenario in ("toxic", "calm", "range"):
+        df = generate(n_steps=1200, seed=7, scenario=scenario)
+        for i in range(len(df)):
+            win = df.iloc[max(0, i - 63):i + 1]
+            fast, ref = raw_signals(win, cfg), _raw_signals_scalar(win, cfg)
+            assert fast.keys() == ref.keys()
+            for key in ref:
+                if isinstance(ref[key], bool):
+                    assert fast[key] is ref[key], (scenario, i, key)
+                else:
+                    assert _bits(fast[key]) == _bits(ref[key]), (scenario, i, key)

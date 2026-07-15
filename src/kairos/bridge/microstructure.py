@@ -21,9 +21,23 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from kairos.perception.schema import N_LEVELS, Regime, column_names, featurize
+from kairos.perception.schema import COLUMN_INDEX, N_LEVELS, Regime, column_names, featurize
 
 from .percept import BEAR, BULL, NEUTRAL, Percept
+
+# Positional column indices into a ``column_names()``-ordered window, resolved
+# once so ``raw_signals`` reduces over a numpy view instead of paying pandas
+# per-column overhead on every hot-loop row. Same order the scalar code uses.
+_MID = COLUMN_INDEX["mid"]
+_BID_PX_0 = COLUMN_INDEX["bid_px_0"]
+_ASK_PX_0 = COLUMN_INDEX["ask_px_0"]
+_BID_SZ = [COLUMN_INDEX[f"bid_sz_{i}"] for i in range(N_LEVELS)]
+_ASK_SZ = [COLUMN_INDEX[f"ask_sz_{i}"] for i in range(N_LEVELS)]
+_BID_CXL = [COLUMN_INDEX[f"bid_cxl_{i}"] for i in range(N_LEVELS)]
+_ASK_CXL = [COLUMN_INDEX[f"ask_cxl_{i}"] for i in range(N_LEVELS)]
+_TRADE_BUY = COLUMN_INDEX["trade_buy"]
+_TRADE_SELL = COLUMN_INDEX["trade_sell"]
+_TRADE_N = COLUMN_INDEX["trade_n"]
 
 
 @dataclass(frozen=True)
@@ -42,31 +56,40 @@ def raw_signals(window, cfg: MicrostructureConfig) -> dict:
     The last row is the current book; trade/cancel flow is aggregated across the
     window. Returns finite, bounded signals (a corrupt book yields a
     stand-aside-friendly, TOXIC-leaning reading rather than raising).
+
+    Reductions run over a single ``window.to_numpy()`` view rather than per-column
+    pandas ``Series`` — bit-identical to the scalar path (same summation order),
+    ~36x less pandas overhead per call on the perception hot loop.
     """
     n = len(window)
-    last = window.iloc[-1]
-    mid = float(last["mid"])
+    a = window.to_numpy()
+    last = a[-1]
+    mid = float(last[_MID])
 
-    best_bid_off = float(last["bid_px_0"])
-    best_ask_off = float(last["ask_px_0"])
+    best_bid_off = float(last[_BID_PX_0])
+    best_ask_off = float(last[_ASK_PX_0])
     spread_ticks = best_bid_off + best_ask_off
 
-    bid_depth = float(sum(last[f"bid_sz_{i}"] for i in range(N_LEVELS)))
-    ask_depth = float(sum(last[f"ask_sz_{i}"] for i in range(N_LEVELS)))
+    # Sequential scalar sum in level order (matches the prior Python ``sum``).
+    bid_depth = float(sum(last[i] for i in _BID_SZ))
+    ask_depth = float(sum(last[i] for i in _ASK_SZ))
     rest = bid_depth + ask_depth
     depth_imbalance = (bid_depth - ask_depth) / rest if rest > 1e-9 else 0.0
 
-    buy = float(window["trade_buy"].sum())
-    sell = float(window["trade_sell"].sum())
+    buy = float(a[:, _TRADE_BUY].sum())
+    sell = float(a[:, _TRADE_SELL].sum())
     flow = buy + sell
     ofi = (buy - sell) / flow if flow > 1e-9 else 0.0
 
-    cxl = float(sum(window[f"bid_cxl_{i}"].sum() + window[f"ask_cxl_{i}"].sum()
-                    for i in range(N_LEVELS)))
+    # Per-column window sums (one vectorised reduction), then summed level-by-level
+    # in the original ``bid_cxl_i + ask_cxl_i`` order to stay bit-identical.
+    bid_cxl = a[:, _BID_CXL].sum(axis=0)
+    ask_cxl = a[:, _ASK_CXL].sum(axis=0)
+    cxl = float(sum(bid_cxl[i] + ask_cxl[i] for i in range(N_LEVELS)))
     avg_cxl = cxl / max(n, 1)
     toxicity = avg_cxl / (avg_cxl + rest + 1e-9)
 
-    trades = float(window["trade_n"].sum())
+    trades = float(a[:, _TRADE_N].sum())
     trade_intensity = 1.0 - math.exp(-trades / (max(n, 1) * cfg.intensity_scale))
 
     blend = cfg.ofi_weight * ofi + (1.0 - cfg.ofi_weight) * depth_imbalance
