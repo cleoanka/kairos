@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+import uuid
 from typing import Annotated
 
 import pandas as pd
@@ -177,7 +178,13 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
             raise NoMarketDataError(
                 symbol, canonical, "Yahoo Finance returned no rows"
             )
-        downloaded.to_csv(data_file, index=False, encoding="utf-8")
+        # Write atomically: a concurrent reader must see either the old file
+        # or the fully-written new one, never a half-flushed frame. The temp
+        # name carries a pid+uuid suffix so parallel writers don't collide on
+        # it either, and os.replace is atomic within the same directory.
+        tmp_file = f"{data_file}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        downloaded.to_csv(tmp_file, index=False, encoding="utf-8")
+        os.replace(tmp_file, data_file)
         data = downloaded
 
     data = _clean_dataframe(data)
