@@ -4,6 +4,7 @@ http.client chunked-transfer exceptions that are not OSErrors (#1024)."""
 from __future__ import annotations
 
 import http.client
+import json
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -22,6 +23,21 @@ def _raise(exc):
 
         def read(self_inner):
             raise exc
+    return _Resp()
+
+
+def _payload(data):
+    body = json.dumps(data).encode()
+
+    class _Resp:
+        def __enter__(self_inner):
+            return self_inner
+
+        def __exit__(self_inner, *a):
+            return False
+
+        def read(self_inner):
+            return body
     return _Resp()
 
 
@@ -58,3 +74,30 @@ class TestStockTwitsSymbolValidation:
         ):
             out = stocktwits.fetch_stocktwits_messages(ticker)
         assert out.startswith("<stocktwits unavailable: invalid ticker")
+
+
+@pytest.mark.unit
+class TestStockTwitsMalformedMessage:
+    """A non-dict element in the ``messages`` array (null/list/str) must be
+    skipped rather than raising an AttributeError, so the well-formed siblings
+    still render and the documented contract holds."""
+
+    @pytest.mark.parametrize("bad", [None, ["not", "a", "dict"], "raw string", 42])
+    def test_non_dict_message_element_is_skipped(self, bad):
+        payload = {
+            "messages": [
+                bad,
+                {
+                    "created_at": "2026-07-15T00:00:00Z",
+                    "user": {"username": "trader"},
+                    "entities": {"sentiment": {"basic": "Bullish"}},
+                    "body": "clean message",
+                },
+            ]
+        }
+        with patch.object(stocktwits, "urlopen", return_value=_payload(payload)):
+            out = stocktwits.fetch_stocktwits_messages("NVDA")
+        # The good message survives; the malformed one is dropped, not counted.
+        assert "@trader" in out
+        assert "clean message" in out
+        assert "Total: 1 most-recent messages" in out

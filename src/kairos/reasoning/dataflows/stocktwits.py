@@ -60,6 +60,11 @@ def fetch_stocktwits_messages(ticker: str, limit: int = 30, timeout: float = 10.
     lines = []
     bullish = bearish = unlabeled = 0
     for m in messages[:limit]:
+        # A non-dict element (e.g. a null/list slipped into the array) would
+        # blow up the .get() calls below — skip it to honor the documented
+        # graceful-degradation contract, matching reddit.py's dict filter.
+        if not isinstance(m, dict):
+            continue
         created = m.get("created_at", "")
         user = (m.get("user") or {}).get("username", "?")
         entities = m.get("entities") or {}
