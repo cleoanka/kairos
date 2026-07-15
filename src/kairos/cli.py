@@ -36,7 +36,15 @@ def _cmd_loop(args) -> int:
     cfg = LoopConfig(symbol=args.symbol, scenario=args.scenario, n_steps=args.steps,
                      seed=args.seed, mode=args.mode, decision_fraction=args.decision_fraction)
     if args.learned:
-        cfg.regime_backend = _load_learned_backend()
+        try:
+            cfg.regime_backend = _load_learned_backend()
+        except FileNotFoundError as exc:  # encoder artifacts are gitignored (Apple-Silicon + MLX only)
+            print(f"--learned needs the trained System-1 encoder, but an artifact is missing: {exc}\n"
+                  "  Produce it with `kairos perceive --mode synthetic` (gen→train→cluster).\n"
+                  "  Training needs Apple Silicon + MLX: `pip install 'kairos[mlx]'`.\n"
+                  "  Or drop --learned to run the loop on the deterministic backend.",
+                  file=sys.stderr)
+            return 2
     result = run_cognitive_loop(cfg)
     if args.json:
         print(json.dumps(result.to_dict(), indent=2, default=str))
