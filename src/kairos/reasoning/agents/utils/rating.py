@@ -21,8 +21,10 @@ RATINGS_5_TIER: tuple[str, ...] = (
 _RATING_SET = {r.lower() for r in RATINGS_5_TIER}
 
 # Matches "Rating: X" / "rating - X" / "Rating: **X**" — tolerates markdown
-# bold wrappers and either a colon or hyphen separator.
-_RATING_LABEL_RE = re.compile(r"rating.*?[:\-][\s*]*(\w+)", re.IGNORECASE)
+# bold wrappers and either a colon or hyphen separator.  The \b anchors keep
+# "rating" a whole word so substrings inside "Operating"/"migrating"/
+# "generating" cannot hijack the authoritative label pass.
+_RATING_LABEL_RE = re.compile(r"\brating\b.*?[:\-][\s*]*(\w+)", re.IGNORECASE)
 
 
 def parse_rating(text: str, default: str = "Hold") -> str:

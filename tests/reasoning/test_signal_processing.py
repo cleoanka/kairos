@@ -50,6 +50,15 @@ class TestParseRating:
         )
         assert parse_rating(text) == "Sell"
 
+    def test_substring_word_does_not_hijack_label(self):
+        # Regression: "Operating"/"migrating"/"generating" all embed the
+        # substring "rating".  Without a \b anchor the label pass reaches the
+        # first ':'/'-' and captures the next word (e.g. "Sell"), flipping the
+        # authoritative signal from a sentence that has no real rating label.
+        assert parse_rating("Operating margin: Sell-side consensus is bullish") == "Hold"
+        assert parse_rating("We are migrating: Sell the old positions later.") == "Sell"
+        assert parse_rating("The generating unit: Hold steady on capacity.") == "Hold"
+
     def test_no_rating_returns_default(self):
         assert parse_rating("No clear directional signal at this time.") == "Hold"
 
