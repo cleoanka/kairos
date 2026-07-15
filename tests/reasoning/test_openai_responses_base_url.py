@@ -39,5 +39,7 @@ class ResponsesApiSelectionTests:
         llm = OpenAIClient(
             "gpt-5.5", base_url="http://localhost:1234/v1", provider="openai"
         ).get_llm()
-        # use_responses_api should be absent/False so the client speaks Chat Completions.
-        assert getattr(llm, "use_responses_api", False) is False
+        # use_responses_api should be falsy (absent/None/False) so the client
+        # speaks Chat Completions. Newer langchain-openai defaults it to None
+        # rather than False, so assert falsiness, not identity.
+        assert not getattr(llm, "use_responses_api", False)

@@ -83,6 +83,10 @@ include = ["kairos*"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+# Collect both the "Test*" prefix and the "*Tests" suffix conventions — several
+# plain (non-unittest.TestCase) "*Tests" classes existed that pytest's default
+# ("Test*") silently skipped, so their tests never ran.
+python_classes = ["Test*", "*Tests"]
 markers = [
     "unit: fast isolated unit tests",
     "integration: tests requiring external services or heavy optional deps",
