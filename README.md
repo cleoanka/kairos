@@ -42,7 +42,7 @@ Kairos keeps **both**, and wires them together the way a mind does:
 
 <p align="center">
   <img src="docs/images/regime_separation.png" width="82%" alt="System-1 separates regimes with no labels">
-  <br><em>System 1 is a self-supervised order-book model that learns to tell RANGE, TREND and TOXIC (spoofed) markets apart <b>with no labels</b> — out-of-sample ARI ≈ 0.99.</em>
+  <br><em>System 1 is a self-supervised order-book model that learns to tell RANGE, TREND and TOXIC (spoofed) markets apart <b>with no labels</b> — out-of-sample ARI ≈ 0.90 on unseen market seeds (≈0.999 linear separability; 0.99 is the in-sample/transductive figure).</em>
 </p>
 
 The hard part is the **join**. If you let the slow, deliberate System 2 read market data freely, it *cheats*: an agent reasoning "as of 2024-05-10" calls a data vendor that quietly hands back revised fundamentals, forward-adjusted prices, or "latest" news — and your backtest inflates. This look-ahead bias is the quiet killer of agentic backtests.
@@ -185,7 +185,7 @@ final_state, decision = ta.propagate(
 - **TREND** — one-sided aggressive flow is eating the book; don't fade it.
 - **TOXIC** — displayed liquidity is *phantom* (spoofing / mass cancels); stand aside.
 
-The regime label is **evaluation-only** — it never enters a training loss (Constitution Rule 4). That's what makes the ARI ≈ 0.99 separation above an honest result and not circular.
+The regime label is **evaluation-only** — it never enters a training loss (Constitution Rule 4). That's what makes the separation above an honest result and not circular: on a **freshly-seeded, unseen** market stream the frozen encoder still recovers the three regimes at **out-of-sample ARI ≈ 0.90** (0.87–0.92 across seeds; ≈0.999 linear separability). The **0.99** you'll see in `artifacts/report.json` is the *in-sample / transductive* number (same stream trained and scored) — reproduce the out-of-sample figure with `python -m kairos.perception.regime.evaluate --seed 13`.
 
 ### 2 · The Causal Perception Bus — closing the look-ahead hole *by construction*
 
