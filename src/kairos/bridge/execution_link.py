@@ -38,9 +38,11 @@ _RECO_RE = re.compile(
     re.IGNORECASE)
 # Conviction: capture the scale in named groups (never a fragile substring test),
 # and require a rating-like magnitude so a stray "confidence: 4200" can't latch.
+# Denominators are listed longest-first so "/100" isn't shadowed by a leading
+# "/10" match (regex alternation is left-to-right, not longest-match).
 _RATING_RE = re.compile(
     r"(?:rating|conviction|confidence)\D{0,14}?(\d+(?:\.\d+)?)\s*"
-    r"(?:/\s*(?P<den>5|10|100)|(?P<pct>%)|(?:out\s+of|of)\s+(?P<den2>5|10|100))?",
+    r"(?:/\s*(?P<den>100|10|5)|(?P<pct>%)|(?:out\s+of|of)\s+(?P<den2>100|10|5))?",
     re.IGNORECASE)
 
 
@@ -65,7 +67,7 @@ def parse_decision(text: str, *, default_conviction: float = 0.6) -> Decision:
     Prefers the explicit ``FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**`` marker
     the TradingAgents pipeline emits; falls back to the last bare BUY/HOLD/SELL
     token. Conviction is read from an optional rating/confidence phrase (``x/5``,
-    ``x/10`` or ``x%``), else defaults (0 for HOLD)."""
+    ``x/10``, ``x/100`` or ``x%``), else defaults (0 for HOLD)."""
     text = text or ""
     # Action, in priority order: explicit marker > recommendation-scoped token >
     # last bare token (weakest — prone to trailing caveats).

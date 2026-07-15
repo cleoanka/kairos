@@ -29,6 +29,15 @@ def test_parse_conviction_scales():
     assert abs(parse_decision("BUY, rating 8/10").conviction - 0.8) < 1e-9
 
 
+def test_parse_conviction_percent_scale_denominator():
+    # "/100" must not be shadowed by the "/10" alternative (regex is left-to-
+    # right, not longest-match): 85/100 -> 0.85, never 8.5 clipped to 1.0.
+    assert abs(parse_decision("BUY, conviction 85/100").conviction - 0.85) < 1e-9
+    assert abs(parse_decision("BUY, conviction 50/100").conviction - 0.5) < 1e-9
+    assert abs(parse_decision("BUY, conviction 90 out of 100").conviction - 0.9) < 1e-9
+    assert parse_decision("BUY, conviction 100/100").conviction == 1.0
+
+
 def test_parse_conviction_spaced_denominator():
     # "9 / 10" (spaces) must read 0.9, not fall through to 0.09.
     assert abs(parse_decision("BUY, confidence 9 / 10").conviction - 0.9) < 1e-9
