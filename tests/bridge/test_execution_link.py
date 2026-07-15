@@ -56,6 +56,24 @@ def test_parse_ignores_implausible_rating_magnitude():
     assert d.conviction == 0.6
 
 
+def test_parse_ignores_scientific_notation_magnitude():
+    # "confidence 1e9" captures only "1" (the "e9" exponent is not a
+    # denominator) — it must NOT read as a [0,1] probability of 1.0. Non-finite /
+    # scientific magnitudes fall back to default_conviction, never full bias.
+    assert parse_decision("BUY. confidence 1e9", default_conviction=0.6).conviction == 0.6
+    assert parse_decision("BUY, rating 1E5", default_conviction=0.6).conviction == 0.6
+    assert parse_decision("BUY. confidence 1e9").bias < 1.0
+
+
+def test_parse_ignores_non_numeric_numerator_fraction():
+    # "rating: nan/10" — the "nan/" garbage must not let the DENOMINATOR digits
+    # "10" latch as a bare 10/10 -> conviction 1.0; it falls back to the default.
+    assert parse_decision("BUY rating: nan/10", default_conviction=0.6).conviction == 0.6
+    assert parse_decision("BUY confidence inf/5", default_conviction=0.6).conviction == 0.6
+    # A real fraction of the same shape is unaffected.
+    assert abs(parse_decision("BUY, rating 8/10").conviction - 0.8) < 1e-9
+
+
 def test_parse_recommendation_scoped_action_beats_trailing_caveat():
     # "recommend BUY ... do not SELL yet" -> BUY (not the trailing SELL token).
     d = parse_decision("We recommend BUY now; do not SELL yet.")

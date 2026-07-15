@@ -46,6 +46,26 @@ _RATING_RE = re.compile(
     re.IGNORECASE)
 
 
+def _plausible_magnitude(rr: re.Match, text: str) -> bool:
+    """Guard the captured rating magnitude against non-finite / garbled shapes.
+
+    ``_RATING_RE`` captures only the leading ``\\d+(?:\\.\\d+)?``, which two
+    LLM-junk shapes can defeat into MAXIMUM conviction:
+
+    * scientific notation — ``confidence 1e9`` captures ``1`` (``e9`` dropped),
+      hitting the ``val <= 1.0`` branch as a bogus probability; and
+    * a non-numeric numerator — ``rating: nan/10`` lets the lazy prefix eat
+      ``nan/`` so the *denominator* digits ``10`` latch as a bare ``10/10``.
+
+    Both are rejected here so parsing falls back to ``default_conviction`` (the
+    same fate as an implausible magnitude), rather than silently pinning bias to
+    ±1.0."""
+    lead, tail = text[:rr.start(1)], text[rr.end(1):]
+    scientific = tail[:1] in ("e", "E")          # e.g. 1e9 — not a rating
+    stray_denominator = lead.endswith("/")       # e.g. nan/10 — the /-RHS, not a magnitude
+    return not (scientific or stray_denominator)
+
+
 @dataclass(frozen=True)
 class Decision:
     """A System-2 stance handed to System-1 for execution."""
@@ -82,7 +102,7 @@ def parse_decision(text: str, *, default_conviction: float = 0.6) -> Decision:
 
     conviction = 0.0 if action == "HOLD" else default_conviction
     rr = _RATING_RE.search(text)
-    if rr and action != "HOLD":
+    if rr and action != "HOLD" and _plausible_magnitude(rr, text):
         val = float(rr.group(1))
         den = rr.group("den") or rr.group("den2")
         if den:
