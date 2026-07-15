@@ -190,3 +190,21 @@ class TestFormatterHandlesRssPosts:
         assert "1234↑" in out
         assert "56c" in out
         assert "via RSS" not in out
+
+
+@pytest.mark.unit
+class TestSymbolValidation:
+    """A malformed/injection ticker is rejected before any request is made,
+    degrading to the placeholder rather than reaching the search URL."""
+
+    @pytest.mark.parametrize(
+        "ticker",
+        ["NVDA/../admin", "AAPL foo", "AA&PL", ""],
+    )
+    def test_invalid_ticker_returns_placeholder_without_request(self, ticker):
+        with patch.object(
+            reddit, "_fetch_subreddit",
+            side_effect=AssertionError("network must not be reached"),
+        ):
+            out = reddit.fetch_reddit_posts(ticker, subreddits=("stocks",), inter_request_delay=0)
+        assert out.startswith("<no Reddit posts found: invalid ticker")

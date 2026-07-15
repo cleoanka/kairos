@@ -30,6 +30,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from .symbol_utils import is_yahoo_safe
+
 logger = logging.getLogger(__name__)
 
 _API = "https://www.reddit.com/r/{sub}/search.json?{qs}"
@@ -200,6 +202,13 @@ def fetch_reddit_posts(
     stay under Reddit's public per-IP rate limit; combined with the RSS-first
     path it makes 429s rare even when several analyses run back-to-back.
     """
+    # The ticker reaches Reddit as a search term; reject anything that isn't a
+    # plain market symbol before it hits the wire — the same character gate the
+    # validated market-data path uses — and degrade to the standard placeholder.
+    if not is_yahoo_safe(ticker.upper()):
+        logger.warning("Reddit fetch skipped for invalid ticker %r", ticker)
+        return f"<no Reddit posts found: invalid ticker {ticker!r}>"
+
     blocks = []
     total_posts = 0
     for i, sub in enumerate(subreddits):

@@ -40,3 +40,21 @@ class StockTwitsResilienceTests:
             out = stocktwits.fetch_stocktwits_messages("NVDA")
         assert "unavailable" in out.lower()
         assert out.startswith("<stocktwits unavailable")
+
+
+@pytest.mark.unit
+class TestStockTwitsSymbolValidation:
+    """A malformed/injection ticker must be rejected before it reaches the URL
+    path, degrading to the placeholder rather than issuing the request."""
+
+    @pytest.mark.parametrize(
+        "ticker",
+        ["NVDA/../admin", "AAPL foo", "AAPL?x=1", "AA&PL", ""],
+    )
+    def test_invalid_ticker_returns_placeholder_without_request(self, ticker):
+        with patch.object(
+            stocktwits, "urlopen",
+            side_effect=AssertionError("network must not be reached"),
+        ):
+            out = stocktwits.fetch_stocktwits_messages(ticker)
+        assert out.startswith("<stocktwits unavailable: invalid ticker")
