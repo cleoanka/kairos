@@ -33,6 +33,11 @@ _BANNER = r"""
 def _cmd_loop(args) -> int:
     from kairos.loop import LoopConfig, run_cognitive_loop
 
+    if not 0.0 < args.decision_fraction < 1.0:  # a fraction of the session, exclusive of both ends
+        print(f"--decision-fraction must be in (0, 1), got {args.decision_fraction}.\n"
+              "  It is the point through the session where the stance is set.",
+              file=sys.stderr)
+        return 2
     cfg = LoopConfig(symbol=args.symbol, scenario=args.scenario, n_steps=args.steps,
                      seed=args.seed, mode=args.mode, decision_fraction=args.decision_fraction)
     if args.learned:
@@ -45,7 +50,14 @@ def _cmd_loop(args) -> int:
                   "  Or drop --learned to run the loop on the deterministic backend.",
                   file=sys.stderr)
             return 2
-    result = run_cognitive_loop(cfg)
+    try:
+        result = run_cognitive_loop(cfg)
+    except ValueError as exc:  # e.g. --steps too small to leave a forward window past perception_window
+        print(f"the loop has no forward window to execute over: {exc}\n"
+              f"  Raise --steps (needs more than perception_window={cfg.perception_window} rows past the "
+              "decision point), or lower --decision-fraction.",
+              file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps(result.to_dict(), indent=2, default=str))
     else:
