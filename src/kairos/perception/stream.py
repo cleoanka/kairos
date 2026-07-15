@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import threading
 from collections import deque
@@ -23,6 +24,8 @@ from urllib.parse import parse_qs, urlparse
 import numpy as np
 
 from .schema import N_LEVELS, Regime, featurize_from_raw, snapshot_to_row, snapshot_to_vector
+
+logger = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 DEFAULT_URL = "wss://stream.bybit.com/v5/public/spot"
@@ -128,14 +131,18 @@ class _Stream:
             row[f"ask_px_{k}"] = float(row[f"ask_px_{k}"]) * tick
 
         X, _ = featurize_from_raw(snapshot_to_vector(snap).reshape(1, -1))
-        regime, z = 0, None
+        regime, z = int(Regime.RANGE), None
         if self.predictor is not None:
             try:
                 regime = int(self.predictor.predict_features(X)[0])
                 from .models.embedder import embed
                 z = np.asarray(embed(self.predictor.model, X, self.predictor.stats)[0])
-            except Exception:
-                regime, z = 0, None
+            except Exception as e:
+                # Fail SAFE: a broken inference must NOT silently pick RANGE (the
+                # least-cautious regime) and drop the maker's stand-aside veto.
+                # Mirror the bridge's non-finite → TOXIC rule (microstructure.py).
+                logger.warning("live regime inference failed, failing safe to TOXIC: %s", e)
+                regime, z = int(Regime.TOXIC), None
         mid = float(snap.mid)
 
         # Publish atomically w.r.t. the symbol: the maker step, rolling-buffer

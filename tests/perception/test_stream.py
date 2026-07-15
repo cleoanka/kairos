@@ -44,3 +44,30 @@ def test_load_predictor_degrades_gracefully():
     from kairos.perception.stream import _load_predictor
     pred, src, is_real = _load_predictor()
     assert isinstance(src, str) and isinstance(is_real, bool)
+
+
+def test_inference_failure_fails_safe_to_toxic():
+    # A broken live inference must NOT silently pick RANGE (regime 0, the least
+    # cautious): it must fail SAFE to TOXIC — mirroring the bridge's non-finite
+    # rule — so the maker keeps its stand-aside veto on an unreadable book.
+    from kairos.perception.ingest.orderbook import LiveOrderBook
+    from kairos.perception.schema import Regime
+    from kairos.perception.stream import _Stream
+
+    class _BrokenPredictor:
+        model = None
+        stats = None
+
+        def predict_features(self, X):
+            raise RuntimeError("model exploded")
+
+    book = LiveOrderBook(tick_size=0.1)
+    book.apply_depth([(100.0 - i * 0.1, 2.0 + i) for i in range(10)],
+                     [(100.1 + i * 0.1, 2.0 + i) for i in range(10)], is_snapshot=True)
+    assert book.ready()
+
+    s = _Stream(predictor=_BrokenPredictor(), metrics={}, model_src="test")
+    s._process(book.snapshot(), s.want)
+
+    assert s.latest is not None
+    assert s.latest["rp"] == int(Regime.TOXIC)   # not RANGE (0)
