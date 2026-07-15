@@ -66,6 +66,35 @@ def test_append_independence():
         assert after.ts == snapshot[c].ts, f"past query {c} changed after future appended"
 
 
+def test_window_before_and_aggregate_before_are_append_independent_under_fuzz():
+    """Append-independence holds for the OTHER two causal reads too, not just
+    ``as_of``: over randomised op sequences, snapshotting ``window_before`` and
+    ``aggregate_before`` before appending random future percepts must reproduce
+    bit-identically afterwards (frozen Percepts / plain dicts compare by value)."""
+    rng = random.Random(4321)
+    for _ in range(200):
+        bus = CausalPerceptionBus(strict=True)
+        t = 0.0
+        for _ in range(rng.randint(1, 60)):
+            t += rng.random() * 3
+            bus.record(make_percept(round(t, 6), regime=rng.randint(0, 2)))
+        # Snapshot a batch of past reads before the future exists.
+        queries = [(rng.uniform(-1, t), rng.randint(1, 8), rng.uniform(0.1, t + 1))
+                   for _ in range(20)]
+        windows = [bus.window_before(q, n=n) for q, n, _ in queries]
+        aggs = [bus.aggregate_before(q, horizon=h) for q, _, h in queries]
+
+        # Append a lot of monotone "future" and re-read the same past queries.
+        for _ in range(rng.randint(1, 60)):
+            t += rng.random() * 3
+            bus.record(make_percept(round(t, 6), regime=rng.randint(0, 2)))
+        for (q, n, h), win, agg in zip(queries, windows, aggs, strict=True):
+            assert bus.window_before(q, n=n) == win, \
+                f"window_before({q}, n={n}) changed after future appended"
+            assert bus.aggregate_before(q, horizon=h) == agg, \
+                f"aggregate_before({q}, horizon={h}) changed after future appended"
+
+
 def test_window_before_is_causal():
     bus = CausalPerceptionBus()
     for t in range(0, 100):
