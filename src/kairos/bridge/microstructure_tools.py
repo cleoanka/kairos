@@ -11,6 +11,7 @@ reasoning wiring, never by the bridge core.
 """
 from __future__ import annotations
 
+import logging
 import math
 import threading
 from typing import Annotated
@@ -18,6 +19,8 @@ from typing import Annotated
 from langchain_core.tools import tool
 
 from .causal_bus import CausalPerceptionBus, LookAheadError
+
+logger = logging.getLogger(__name__)
 
 # Active bus registry, set by the trading graph before a run (mirrors how the
 # reasoning dataflows read a process-global config via ``set_config``). The lock
@@ -77,13 +80,22 @@ def get_microstructure_regime(
     not price history. Treat a TOXIC regime as a strong stand-aside signal."""
     bus = _bus_for(symbol)
     if bus is None:
+        # No bus registered means System-1 was never wired into this run — a
+        # config/wiring regression, not a data gap. Warn so it's diagnosable
+        # from logs; the agent still gets the plain unavailable message.
+        logger.warning(
+            "No perception bus registered for %s; microstructure grounding is off "
+            "for this run (was set_perception_bus called?).", symbol,
+        )
         return _UNAVAILABLE.format(symbol=symbol, curr_date=curr_date)
     try:
         p = bus.as_of(curr_date)
-    except (LookAheadError, ValueError, TypeError):
+    except (LookAheadError, ValueError, TypeError) as e:
         # An unresolvable or non-finite cutoff (a malformed date, "nan", inf)
         # must fail closed: report no perception rather than raise into the
-        # agent — and never leak or fabricate a regime.
+        # agent — and never leak or fabricate a regime. Log the discarded cause
+        # so a garbled LLM cutoff is diagnosable, not silently swallowed.
+        logger.warning("Unresolvable cutoff %r for %s: %s", curr_date, symbol, e)
         return _UNAVAILABLE.format(symbol=symbol, curr_date=curr_date)
     if p is None:
         return _UNAVAILABLE.format(symbol=symbol, curr_date=curr_date)
@@ -123,6 +135,12 @@ def get_order_flow_state(
     never mislabelled."""
     bus = _bus_for(symbol)
     if bus is None:
+        # See get_microstructure_regime: a missing bus is a wiring bug, not a
+        # data gap — warn so it's diagnosable rather than a silent deferral.
+        logger.warning(
+            "No perception bus registered for %s; microstructure grounding is off "
+            "for this run (was set_perception_bus called?).", symbol,
+        )
         return _UNAVAILABLE.format(symbol=symbol, curr_date=curr_date)
     # An index clock counts monotonic steps, not seconds; default and label the
     # horizon in that unit so the window really is "recent" and the header honest.
@@ -136,7 +154,9 @@ def get_order_flow_state(
         return _UNAVAILABLE.format(symbol=symbol, curr_date=curr_date)
     try:
         agg = bus.aggregate_before(curr_date, horizon)
-    except (LookAheadError, ValueError, TypeError):
+    except (LookAheadError, ValueError, TypeError) as e:
+        # Log the discarded cause so a garbled LLM cutoff is diagnosable.
+        logger.warning("Unresolvable cutoff %r for %s: %s", curr_date, symbol, e)
         return _UNAVAILABLE.format(symbol=symbol, curr_date=curr_date)
     if agg is None:
         return _UNAVAILABLE.format(symbol=symbol, curr_date=curr_date)

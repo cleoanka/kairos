@@ -159,6 +159,27 @@ def test_tool_without_registered_bus_is_safe():
     assert "unavailable" in out.lower()
 
 
+@pytest.mark.parametrize(
+    "tool_call",
+    [
+        lambda: get_microstructure_regime.invoke({"symbol": "ZZZZ", "curr_date": "1.0"}),
+        lambda: get_order_flow_state.invoke({"symbol": "ZZZZ", "curr_date": "1.0"}),
+    ],
+)
+def test_missing_bus_warns_operator_so_wiring_bug_is_diagnosable(tool_call, caplog):
+    # A missing bus is a wiring regression (set_perception_bus never called), not
+    # a normal data gap. The agent still gets the plain unavailable string, but an
+    # operator-side WARNING must fire so the two are distinguishable from logs.
+    clear_perception_bus()
+    with caplog.at_level("WARNING", logger="kairos.bridge.microstructure_tools"):
+        out = tool_call()
+    assert "unavailable" in out.lower()
+    assert any(
+        "no perception bus registered" in r.message.lower() and r.levelname == "WARNING"
+        for r in caplog.records
+    ), caplog.text
+
+
 @pytest.mark.parametrize("bad_date", ["nan", "inf", "-inf", "not-a-date"])
 def test_tool_fails_closed_on_unresolvable_cutoff(bus, bad_date):
     # An LLM (or a corrupt date field) handing "nan"/"inf"/garbage as curr_date
@@ -168,6 +189,20 @@ def test_tool_fails_closed_on_unresolvable_cutoff(bus, bad_date):
     assert "unavailable" in out.lower()
     agg = get_order_flow_state.invoke({"symbol": "BTCUSDT", "curr_date": bad_date})
     assert "unavailable" in agg.lower()
+
+
+def test_unresolvable_cutoff_warns_with_discarded_cause(bus, caplog):
+    # The except-clause used to swallow the exception whole; now it logs the
+    # discarded cause so a garbled LLM cutoff is diagnosable, not silent.
+    with caplog.at_level("WARNING", logger="kairos.bridge.microstructure_tools"):
+        out = get_microstructure_regime.invoke(
+            {"symbol": "BTCUSDT", "curr_date": "not-a-date"}
+        )
+    assert "unavailable" in out.lower()
+    assert any(
+        "unresolvable cutoff" in r.message.lower() and r.levelname == "WARNING"
+        for r in caplog.records
+    ), caplog.text
 
 
 def test_initial_state_seeds_microstructure_report():

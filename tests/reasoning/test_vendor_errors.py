@@ -100,6 +100,29 @@ class RouterHandlesBaseTypesTests(unittest.TestCase):
         ), self.assertRaises(AlphaVantageNotConfiguredError):
             interface.route_to_vendor("get_stock_data", "AAPL", "2026-01-01", "2026-01-10")
 
+    def test_all_rate_limited_surfaces_the_throttle_not_generic_no_vendor(self):
+        # Every vendor throttled: the router must raise the actionable rate-limit
+        # error (vendors ARE available, just throttled), never the misleading
+        # generic "No available vendor" that hid the cause. The symmetric
+        # not-configured path already has a test; this closes the rate-limit gap.
+        set_config({"data_vendors": {"core_stock_apis": "alpha_vantage,yfinance"}})
+
+        def _throttled(*a, **k):
+            raise AlphaVantageRateLimitError("slow down")
+
+        with mock.patch.dict(
+            interface.VENDOR_METHODS,
+            {"get_stock_data": {"alpha_vantage": _throttled, "yfinance": _throttled}},
+            clear=False,
+        ), self.assertLogs(
+            "kairos.reasoning.dataflows.interface", level="WARNING"
+        ) as cm, self.assertRaises(VendorRateLimitError) as ctx:
+            interface.route_to_vendor("get_stock_data", "AAPL", "2026-01-01", "2026-01-10")
+        self.assertIn("slow down", str(ctx.exception))
+        joined = "\n".join(cm.output)
+        self.assertIn("rate-limited", joined)
+        self.assertNotIn("No available vendor", joined)
+
 
 if __name__ == "__main__":
     unittest.main()
