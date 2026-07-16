@@ -9,11 +9,18 @@ from kairos.reasoning.agents.utils.rating import parse_rating
 class TradingMemoryLog:
     """Append-only markdown log of trading decisions and reflections."""
 
-    # HTML comment: cannot appear in LLM prose output, safe as a hard delimiter
+    # HTML comment used as a hard delimiter. LLM prose (or attacker-influenced
+    # fetched content that reaches final_trade_decision) *can* contain this
+    # token, so stored fields are sanitized in store_decision() before writing.
     _SEPARATOR = "\n\n<!-- ENTRY_END -->\n\n"
+    # Bare separator comment (without surrounding newlines) — the injectable token.
+    _SEPARATOR_TOKEN = "<!-- ENTRY_END -->"
     # Precompiled patterns — avoids re-compilation on every load_entries() call
     _DECISION_RE = re.compile(r"DECISION:\n(.*?)(?=\nREFLECTION:|\Z)", re.DOTALL)
     _REFLECTION_RE = re.compile(r"REFLECTION:\n(.*?)$", re.DOTALL)
+    # A line that would parse as an entry tag: starts with '[', ends with ']'.
+    # Defused per-line so an injected body cannot forge a resolved entry.
+    _TAG_LINE_RE = re.compile(r"^(\s*)\[(.*)\]\s*$", re.MULTILINE)
 
     def __init__(self, config: dict = None):
         cfg = config or {}
@@ -33,9 +40,17 @@ class TradingMemoryLog:
         trade_date: str,
         final_trade_decision: str,
     ) -> None:
-        """Append pending entry at end of propagate(). No LLM call."""
+        """Append pending entry at end of propagate(). No LLM call.
+
+        ``ticker`` and ``final_trade_decision`` are sanitized before writing:
+        they may carry attacker-influenced fetched content, so the separator
+        token and forged ``[... ]`` tag lines are neutralized to prevent a
+        stored prompt-injection that fabricates a resolved past-outcome entry.
+        """
         if not self._log_path:
             return
+        ticker = self._sanitize_ticker(ticker)
+        final_trade_decision = self._sanitize_field(final_trade_decision)
         # Idempotency guard: fast raw-text scan instead of full parse
         if self._log_path.exists():
             raw = self._log_path.read_text(encoding="utf-8")
@@ -216,6 +231,30 @@ class TradingMemoryLog:
         tmp_path.replace(self._log_path)
 
     # --- Helpers ---
+
+    def _sanitize_field(self, value: str) -> str:
+        """Neutralize entry-delimiter tokens and forged tag lines in decision text.
+
+        Stored decision text can carry attacker-influenced fetched content.
+        Removing the separator comment prevents load_entries() from splitting on
+        an injected token, and blunting a leading ``[`` on any ``[...]`` line
+        stops _parse_entry() from reading it as a second (forged "resolved")
+        entry.  Both edits are inert in normal decision prose.
+        """
+        # Break the separator comment so it can never split into a new entry.
+        value = value.replace(self._SEPARATOR_TOKEN, "<!- ENTRY_END ->")
+        # Defuse any line that would parse as an entry tag "[ ... ]".
+        return self._TAG_LINE_RE.sub(r"\1(\2)", value)
+
+    def _sanitize_ticker(self, ticker: str) -> str:
+        """Strip tag-structural characters from a ticker before it enters a tag.
+
+        A ticker is embedded verbatim into the ``[date | ticker | ...]`` tag
+        line, so ``[`` ``]`` ``|`` and newlines would let a crafted ticker forge
+        extra tag fields (a fake resolved outcome) or a second entry.  A real
+        ticker never contains these, so stripping them is inert in normal use.
+        """
+        return self._sanitize_field(ticker).translate({ord(c): None for c in "[]|\r\n"})
 
     def _apply_rotation(self, blocks: list[str]) -> list[str]:
         """Drop oldest resolved blocks when their count exceeds max_entries.
