@@ -61,9 +61,10 @@ src/kairos/
 Each layer keeps its own soul, and the Constitution (`scripts/soul_check.py`)
 is **scoped** accordingly:
 
-- **System 1 + bridge** — subject to Rules 1/2/4: no `memcpy` on the LOB hot
+- **System 1 + bridge** — subject to Rules 1/2/3/4: no `memcpy` on the LOB hot
   path, no classic price-lagged TA vocabulary (`rsi`, `macd`, `ema`, ...), no
-  supervised regime/direction label as a training target.
+  REST/HTTP in the execution path (WebSocket/FIX only), no supervised
+  regime/direction label as a training target.
 - **System 2** — intentionally *exempt* from the no-classic-TA rule; the LLM
   agents *may* reason about RSI/MACD as fallible evidence.
 - **Rule 5 (Causality)** — NEW to Kairos. The reasoning-facing bridge files

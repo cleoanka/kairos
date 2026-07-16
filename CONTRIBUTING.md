@@ -36,13 +36,22 @@ make test-core        # bridge + loop + perception  (no LLM/MLX/native needed)
 make reproduce        # the honest end-to-end reproducibility gate
 ```
 
+`make test-core` also carries the **scoped mypy gate**: `tests/loop/test_mypy_gate.py`
+runs `python -m mypy` (reading `[tool.mypy]` in `pyproject.toml`) and fails the
+suite on any type error. Mirroring how ruff only lints Kairos-original code, the
+gate type-checks exactly the neuro-symbolic core — `src/kairos/bridge`,
+`src/kairos/loop`, and `src/kairos/cli.py` — and leaves the vendored
+`kairos.reasoning` tree (upstream typing debt) out on purpose. It is pinned to
+`python_version = "3.13"`, so it type-checks against 3.13 even when the `core`
+job runs on 3.11 / 3.12.
+
 If you touched `kairos.reasoning`, also run `make test-all` with the
 `[reasoning]` extra installed (placeholder API keys are enough — no test makes a
 live call).
 
 CI runs the same steps on every push and PR (`.github/workflows/ci.yml`): the
-`core` job on Python 3.11 and 3.12 runs soul_check + lint + core tests +
-`reproduce.py`; the `reasoning` job runs the TradingAgents graph and
+`core` job on Python 3.11 and 3.12 runs soul_check + lint + core tests (mypy gate
+included) + `reproduce.py`; the `reasoning` job runs the TradingAgents graph and
 microstructure-integration tests.
 
 ## The Constitution (`scripts/soul_check.py`) — non-negotiable

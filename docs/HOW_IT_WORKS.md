@@ -305,8 +305,9 @@ decision = parse_decision(str(decision_text))   # → Decision(action, convictio
 
 `parse_decision` extracts the stance from the free-text verdict — it prefers the
 explicit `FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**` marker the pipeline
-emits, falls back to the last bare BUY/HOLD/SELL token, and reads conviction
-from an optional `x/5`, `x/10`, or `x%` rating.
+emits, falls back to the last bare BUY/HOLD/SELL token, then to a 5-tier tilt
+word (`Overweight` → BUY, `Underweight` → SELL, at a reduced conviction), and
+reads conviction from an optional `x/5`, `x/10`, `x/100`, or `x%` rating.
 
 Run it (needs `[reasoning]` and a configured provider key):
 
