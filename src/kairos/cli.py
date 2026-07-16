@@ -98,6 +98,26 @@ def _valid_date(value: str) -> str:
     return value
 
 
+def _valid_ticker(value: str) -> str:
+    """argparse ``type=`` for the reason ticker: validate charset, then normalize.
+
+    Mirrors the interactive path (get_ticker): reject anything outside the Yahoo
+    symbol charset up front (exit 2, not a deep traceback), then resolve to the
+    canonical symbol the data path will price. Charset validation also closes a
+    stored-injection vector — an unvalidated ticker containing ``|``/``]``/newline
+    reaches the memory-log tag line and can forge fabricated "resolved" entries.
+    """
+    from kairos.reasoning_cli.utils import is_valid_ticker_input, normalize_ticker_symbol
+
+    if not value.strip():
+        raise argparse.ArgumentTypeError("ticker must not be empty")
+    if not is_valid_ticker_input(value):
+        raise argparse.ArgumentTypeError(
+            f"invalid ticker {value!r}: use a Yahoo symbol, e.g. AAPL, 0700.HK, BTC-USD"
+        )
+    return normalize_ticker_symbol(value)
+
+
 def _cmd_reason(args) -> int:
     try:
         from kairos.reasoning.default_config import DEFAULT_CONFIG
@@ -106,11 +126,16 @@ def _cmd_reason(args) -> int:
         print(f"System-2 reasoning needs the [reasoning] extra: {exc}\n"
               "  pip install 'kairos[reasoning]'", file=sys.stderr)
         return 2
+    asset_type = args.asset_type
+    if asset_type is None:  # auto-detect from the (normalized) ticker, like the interactive path
+        from kairos.reasoning_cli.utils import detect_asset_type
+
+        asset_type = detect_asset_type(args.ticker).value
     ta = TradingAgentsGraph(debug=args.debug, config=DEFAULT_CONFIG.copy())
-    _, decision = ta.propagate(args.ticker, args.date, asset_type=args.asset_type)
+    _, decision = ta.propagate(args.ticker, args.date, asset_type=asset_type)
     if args.json:
         print(json.dumps({"ticker": args.ticker, "date": args.date,
-                          "asset_type": args.asset_type, "decision": decision}, default=str))
+                          "asset_type": asset_type, "decision": decision}, default=str))
     else:
         print(decision)
     return 0
@@ -183,9 +208,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="System-1 (LOB-Core) subcommands (gen/train/cluster/backtest/...)")
 
     re = sub.add_parser("reason", help="System-2 (TradingAgents) decision for a ticker/date")
-    re.add_argument("ticker")
+    re.add_argument("ticker", type=_valid_ticker,
+                    help="Yahoo symbol, e.g. AAPL, 0700.HK, BTC-USD (validated and normalized)")
     re.add_argument("date", type=_valid_date, help="analysis date YYYY-MM-DD (not in the future)")
-    re.add_argument("--asset-type", default="stock", choices=["stock", "crypto"])
+    re.add_argument("--asset-type", default=None, choices=["stock", "crypto"],
+                    help="override the asset type (auto-detected from the ticker by default)")
     re.add_argument("--debug", action="store_true")
     re.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     re.set_defaults(func=_cmd_reason)
