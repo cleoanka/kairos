@@ -74,6 +74,40 @@ def test_parse_ignores_non_numeric_numerator_fraction():
     assert abs(parse_decision("BUY, rating 8/10").conviction - 0.8) < 1e-9
 
 
+def test_parse_five_tier_rating_words_are_directional():
+    # The System-2 Portfolio Manager renders on a 5-tier scale; every tier must
+    # carry a non-zero directional bias EXCEPT the neutral Hold. Overweight and
+    # Underweight (the middle tilts) must NOT collapse to a stand-aside HOLD.
+    biases = {w: parse_decision(w).bias for w in
+              ("Buy", "Overweight", "Hold", "Underweight", "Sell")}
+    assert biases["Buy"] > 0
+    assert biases["Overweight"] > 0        # bullish tilt — reduced-conviction BUY
+    assert biases["Hold"] == 0.0
+    assert biases["Underweight"] < 0       # bearish tilt — reduced-conviction SELL
+    assert biases["Sell"] < 0
+    # A tilt is a REDUCED-conviction lean ("gradually increase/decrease"), never
+    # as strong as an outright Buy/Sell.
+    assert 0 < biases["Overweight"] < biases["Buy"]
+    assert biases["Sell"] < biases["Underweight"] < 0
+    assert parse_decision("Overweight").action == "BUY"
+    assert parse_decision("Underweight").action == "SELL"
+
+
+def test_parse_tilt_from_pm_rating_markdown():
+    # The real hand-off is the PM's "**Rating**: <tier>" markdown, not a bare word.
+    over = parse_decision("## Decision\n\nrationale...\n\n**Rating**: Overweight\n")
+    assert over.action == "BUY" and over.bias > 0
+    under = parse_decision("## Decision\n\nrationale...\n\n**Rating**: Underweight\n")
+    assert under.action == "SELL" and under.bias < 0
+
+
+def test_parse_explicit_action_and_rating_beat_tilt_word():
+    # An explicit BUY/SELL token outranks a co-occurring tilt word, and an
+    # explicit rating phrase still governs a tilt's conviction.
+    assert parse_decision("We recommend SELL despite an Overweight lean.").action == "SELL"
+    assert abs(parse_decision("Overweight, rating 8/10").conviction - 0.8) < 1e-9
+
+
 def test_parse_recommendation_scoped_action_beats_trailing_caveat():
     # "recommend BUY ... do not SELL yet" -> BUY (not the trailing SELL token).
     d = parse_decision("We recommend BUY now; do not SELL yet.")

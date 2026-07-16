@@ -31,6 +31,14 @@ from .microstructure import MicrostructureConfig, heuristic_regime, raw_signals
 
 _ACTION_RE = re.compile(r"FINAL\s+TRANSACTION\s+PROPOSAL:\s*\**\s*(BUY|HOLD|SELL)", re.IGNORECASE)
 _BARE_RE = re.compile(r"\b(BUY|HOLD|SELL)\b")
+# The System-2 Portfolio Manager renders its final decision on a 5-tier scale
+# (Buy/Overweight/Hold/Underweight/Sell) whose middle tilts carry NO BUY/HOLD/SELL
+# token, so they would otherwise fall through to HOLD and silently drop a real
+# directional stance. Overweight = "gradually increase exposure" (a reduced-
+# conviction BUY); Underweight = "reduce exposure, take partial profits" (a
+# reduced-conviction SELL). Full-conviction Buy/Sell already read via _BARE_RE.
+_TILT_RE = re.compile(r"\b(OVERWEIGHT|UNDERWEIGHT)\b", re.IGNORECASE)
+_TILT_ACTION = {"OVERWEIGHT": "BUY", "UNDERWEIGHT": "SELL"}
 # A recommendation-scoped action: the token nearest a conclusion word, so
 # "we recommend BUY; do not SELL yet" reads BUY, not the trailing caveat.
 _RECO_RE = re.compile(
@@ -81,26 +89,37 @@ class Decision:
         return s * float(np.clip(self.conviction, 0.0, 1.0))
 
 
-def parse_decision(text: str, *, default_conviction: float = 0.6) -> Decision:
+def parse_decision(text: str, *, default_conviction: float = 0.6,
+                   tilt_conviction: float = 0.3) -> Decision:
     """Extract a :class:`Decision` from a free-text System-2 verdict.
 
     Prefers the explicit ``FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**`` marker
     the TradingAgents pipeline emits; falls back to the last bare BUY/HOLD/SELL
-    token. Conviction is read from an optional rating/confidence phrase (``x/5``,
-    ``x/10``, ``x/100`` or ``x%``), else defaults (0 for HOLD)."""
+    token, then to a 5-tier tilt word (Overweight → BUY, Underweight → SELL) at a
+    reduced ``tilt_conviction`` — they mean "gradually increase/decrease
+    exposure", not full conviction. Conviction is otherwise read from an optional
+    rating/confidence phrase (``x/5``, ``x/10``, ``x/100`` or ``x%``), else
+    defaults (0 for HOLD)."""
     text = text or ""
     # Action, in priority order: explicit marker > recommendation-scoped token >
-    # last bare token (weakest — prone to trailing caveats).
+    # last bare token > 5-tier tilt word (weakest — the reduced-conviction lean a
+    # bare BUY/HOLD/SELL would otherwise mask). A tilt starts at tilt_conviction,
+    # still overridable by an explicit rating phrase below.
+    tilt = False
     m = _ACTION_RE.search(text)
     if m:
         action = m.group(1).upper()
     elif (r := _RECO_RE.search(text)):
         action = r.group(1).upper()
+    elif (hits := _BARE_RE.findall(text.upper())):
+        action = hits[-1]
+    elif (t := _TILT_RE.findall(text.upper())):
+        action = _TILT_ACTION[t[-1]]
+        tilt = True
     else:
-        hits = _BARE_RE.findall(text.upper())
-        action = hits[-1] if hits else "HOLD"
+        action = "HOLD"
 
-    conviction = 0.0 if action == "HOLD" else default_conviction
+    conviction = 0.0 if action == "HOLD" else (tilt_conviction if tilt else default_conviction)
     rr = _RATING_RE.search(text)
     if rr and action != "HOLD" and _plausible_magnitude(rr, text):
         val = float(rr.group(1))
