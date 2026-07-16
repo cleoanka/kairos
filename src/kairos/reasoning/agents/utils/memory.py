@@ -125,10 +125,15 @@ class TradingMemoryLog:
         Finds the first pending entry matching (trade_date, ticker), updates
         its tag with return figures, and appends a REFLECTION section.  Uses
         a temp-file + os.replace() so a crash mid-write never corrupts the log.
+
+        ``reflection`` is sanitized like the stored decision: it is an
+        attacker-influenceable LLM output, so an injected separator + forged
+        ``[... resolved ...]`` tag must not split into a fabricated entry.
         """
         if not self._log_path or not self._log_path.exists():
             return
 
+        reflection = self._sanitize_field(reflection)
         text = self._log_path.read_text(encoding="utf-8")
         blocks = text.split(self._SEPARATOR)
 
@@ -181,6 +186,10 @@ class TradingMemoryLog:
 
         Each element of updates must have keys: ticker, trade_date,
         raw_return, alpha_return, holding_days, reflection.
+
+        Each ``reflection`` is sanitized like the stored decision: it is an
+        attacker-influenceable LLM output, so an injected separator + forged
+        ``[... resolved ...]`` tag must not split into a fabricated entry.
         """
         if not self._log_path or not self._log_path.exists() or not updates:
             return
@@ -214,8 +223,9 @@ class TradingMemoryLog:
                         f" | {raw_pct} | {alpha_pct} | {upd['holding_days']}d]"
                     )
                     rest = "\n".join(lines[1:])
+                    reflection = self._sanitize_field(upd["reflection"])
                     new_blocks.append(
-                        f"{new_tag}\n\n{rest.lstrip()}\n\nREFLECTION:\n{upd['reflection']}"
+                        f"{new_tag}\n\n{rest.lstrip()}\n\nREFLECTION:\n{reflection}"
                     )
                     del update_map[(trade_date, ticker)]
                     matched = True
