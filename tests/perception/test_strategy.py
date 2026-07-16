@@ -87,6 +87,15 @@ def test_as_trend_reduce_only():
     assert lng.ask_sz > 0 and lng.bid_sz == 0.0
 
 
+def test_as_maker_has_no_inert_tick_param():
+    # The A-S maker quotes purely from the reservation price/half-spread clamped
+    # to the touch — it never snaps to a grid — so it must not carry an inert
+    # `tick` field whose name would mislead readers into thinking it does.
+    with pytest.raises(TypeError):
+        AvellanedaStoikovMaker(tick=1.0)
+    assert not hasattr(AvellanedaStoikovMaker(), "tick")
+
+
 def test_makers_satisfy_maker_protocol():
     # run_backtest is typed against the structural Maker contract; every maker it
     # is fed must satisfy it (baseline skew-maker and the A-S sibling alike).

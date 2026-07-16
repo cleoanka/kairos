@@ -24,11 +24,10 @@ from .maker import Quote
 
 
 class AvellanedaStoikovMaker:
-    def __init__(self, base_size: float = 1.0, tick: float = 1.0, gamma: float = 0.02,
+    def __init__(self, base_size: float = 1.0, gamma: float = 0.02,
                  k: float = 0.5, horizon: float = 1.0, vol_window: int = 50,
                  max_inventory: float = 20.0, default_sigma: float = 2.0):
         self.base_size = base_size
-        self.tick = tick
         self.gamma = gamma
         self.k = k
         self.horizon = horizon
