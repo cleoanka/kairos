@@ -76,20 +76,26 @@ def raw_signals(window, cfg: MicrostructureConfig) -> dict:
     rest = bid_depth + ask_depth
     depth_imbalance = (bid_depth - ask_depth) / rest if rest > 1e-9 else 0.0
 
-    buy = float(a[:, _TRADE_BUY].sum())
-    sell = float(a[:, _TRADE_SELL].sum())
+    # Window reductions use ``np.nansum`` to preserve the prior pandas
+    # ``Series.sum()`` semantics (skipna=True): a NaN in a NON-last window row
+    # is skipped, exactly as before the numpy-first refactor. Plain ``.sum()``
+    # would propagate that NaN into trade_intensity — which is NOT in the finite
+    # guard below — and silently leak a NaN percept past the corrupt-book
+    # fail-safe. On finite data nansum == sum, so bit-identity holds.
+    buy = float(np.nansum(a[:, _TRADE_BUY]))
+    sell = float(np.nansum(a[:, _TRADE_SELL]))
     flow = buy + sell
     ofi = (buy - sell) / flow if flow > 1e-9 else 0.0
 
     # Per-column window sums (one vectorised reduction), then summed level-by-level
     # in the original ``bid_cxl_i + ask_cxl_i`` order to stay bit-identical.
-    bid_cxl = a[:, _BID_CXL].sum(axis=0)
-    ask_cxl = a[:, _ASK_CXL].sum(axis=0)
+    bid_cxl = np.nansum(a[:, _BID_CXL], axis=0)
+    ask_cxl = np.nansum(a[:, _ASK_CXL], axis=0)
     cxl = float(sum(bid_cxl[i] + ask_cxl[i] for i in range(N_LEVELS)))
     avg_cxl = cxl / max(n, 1)
     toxicity = avg_cxl / (avg_cxl + rest + 1e-9)
 
-    trades = float(a[:, _TRADE_N].sum())
+    trades = float(np.nansum(a[:, _TRADE_N]))
     trade_intensity = 1.0 - math.exp(-trades / (max(n, 1) * cfg.intensity_scale))
 
     blend = cfg.ofi_weight * ofi + (1.0 - cfg.ofi_weight) * depth_imbalance

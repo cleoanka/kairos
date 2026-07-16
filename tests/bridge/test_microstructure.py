@@ -114,6 +114,21 @@ def test_corrupt_size_forces_toxic_standaside():
     assert p.is_toxic and p.direction_strength == 0.0
 
 
+def test_nonlast_nan_trade_row_is_skipped_not_leaked():
+    # A NaN in a NON-current window row's trade column must be SKIPPED (the prior
+    # pandas Series.sum used skipna=True), never propagated into trade_intensity
+    # — which sits OUTSIDE the corrupt-book finite guard and would otherwise leak
+    # a NaN percept. Regression for the numpy-first raw_signals refactor.
+    cfg = MicrostructureConfig()
+    df = _window("calm").copy()
+    df.iloc[-5, df.columns.get_loc("trade_buy")] = np.nan  # a stale row, not the current book
+    sig = raw_signals(df.tail(32), cfg)
+    assert math.isfinite(sig["trade_intensity"])
+    assert not sig["corrupt"]  # a stale trade NaN is skipped, not a corrupt current book
+    p = percept_from_window(df.tail(32), "X", ts=float(df.iloc[-2]["ts"]))
+    assert math.isfinite(p.trade_intensity)
+
+
 class _NaNEncoder(NumpyEncoder):
     """NumpyEncoder whose forward pass emits a non-finite embedding (no weights)."""
 
