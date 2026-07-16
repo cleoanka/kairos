@@ -382,11 +382,14 @@ class TradingAgentsGraph:
                 self._checkpointer_ctx = None
                 self.graph = self.workflow.compile()
             # Clear the run's causal bus so a later run for the same symbol never
-            # silently reuses a stale (process-global) perception history.
+            # silently reuses a stale (process-global) perception history. Pass the
+            # exact bus this run registered so the registry's identity guard is
+            # actually armed: a late finally then only pops OUR bus and can never
+            # evict a concurrent same-symbol run's live bus (and blind its analyst).
             if perception_bus is not None:
                 from kairos.bridge.microstructure_tools import clear_perception_bus
 
-                clear_perception_bus(symbol=company_name)
+                clear_perception_bus(symbol=company_name, bus=perception_bus)
 
     def save_reports(self, final_state, ticker, save_path=None) -> Path:
         """Write the markdown report tree for a completed run, like the CLI does.

@@ -116,6 +116,43 @@ def test_clear_perception_bus_is_identity_safe():
     clear_perception_bus()
 
 
+def test_propagate_finally_honors_bus_identity_guard():
+    # The wired-up guard: a run's real propagate() finally must pass the bus it
+    # registered to clear_perception_bus, so it can never evict a *concurrent*
+    # same-symbol run's live bus. The isolated helper test above already proves the
+    # guard; this drives the actual production finally path the call site uses.
+    from kairos.bridge.microstructure_tools import _bus_for, clear_perception_bus
+
+    clear_perception_bus()
+    df = generate(n_steps=400, seed=1, scenario="toxic")
+    bus_a = build_causal_bus(df, "BTCUSDT", window=64, step=8)
+    bus_b = build_causal_bus(df, "BTCUSDT", window=64, step=8)
+
+    client = MagicMock()
+    client.get_llm.return_value = MagicMock()
+    with patch("kairos.reasoning.graph.trading_graph.create_llm_client", return_value=client):
+        from kairos.reasoning.graph.trading_graph import TradingAgentsGraph
+
+        ta = TradingAgentsGraph(selected_analysts=("microstructure", "market"))
+
+    # Run A propagates with bus_a but, mid-flight, run B registers bus_b as the
+    # live bus for the same symbol. When A's _run_graph returns, A's finally fires.
+    def _hand_off_to_run_b(*_args, **_kwargs):
+        set_perception_bus(bus_b, symbol="BTCUSDT")  # run B is now the live bus
+        return ({}, "HOLD")
+
+    with (
+        patch.object(ta, "_run_graph", side_effect=_hand_off_to_run_b),
+        patch.object(ta, "_resolve_pending_entries"),
+    ):
+        ta.propagate("BTCUSDT", "2026-01-10", asset_type="crypto", perception_bus=bus_a)
+
+    # With bus=perception_bus wired at the call site, A's finally only pops its own
+    # bus — B's live bus survives and its Microstructure Analyst keeps its percepts.
+    assert _bus_for("BTCUSDT") is bus_b, "run A's finally clobbered run B's live bus"
+    clear_perception_bus()
+
+
 def test_tool_without_registered_bus_is_safe():
     clear_perception_bus()
     out = get_microstructure_regime.invoke({"symbol": "ZZZZ", "curr_date": "1.0"})
