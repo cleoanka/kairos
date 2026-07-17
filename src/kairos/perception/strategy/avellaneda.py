@@ -57,6 +57,8 @@ class AvellanedaStoikovMaker:
             return Quote(None, 0.0, None, 0.0)
 
         var = sigma * sigma * self.horizon
+        if not math.isfinite(var):
+            return Quote(None, 0.0, None, 0.0)   # volatility overflowed to inf — stand aside
         r = mid - inventory * self.gamma * var                       # reservation price
         half = 0.5 * self.gamma * var + (1.0 / self.gamma) * math.log(1.0 + self.gamma / self.k)
         # Stay competitive: clamp to at-or-improving the touch (a wider A-S spread

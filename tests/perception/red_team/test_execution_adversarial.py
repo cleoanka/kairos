@@ -47,6 +47,24 @@ def test_as_maker_refuses_overflowing_mid_from_finite_book():
     assert q.two_sided
 
 
+def test_as_maker_refuses_overflowing_volatility_from_finite_mids():
+    # Each book's mid is individually finite, but the alternating +/-1e200 swing
+    # makes the volatility deque's std() overflow to inf; with inventory==0 the
+    # reservation r = mid - 0*gamma*inf = nan would leak past the mid-only guard.
+    # The volatility term must be guarded so no NaN price ever leaves decide().
+    m = AvellanedaStoikovMaker()
+    q = None
+    for i in range(12):
+        s = 1e200 if i % 2 == 0 else -1e200
+        q = m.decide(int(Regime.RANGE), s, s, 0.0)      # mid == s, individually finite
+        assert q.bid_px is None or math.isfinite(q.bid_px)
+        assert q.ask_px is None or math.isfinite(q.ask_px)
+    assert q.bid_px is None and q.ask_px is None         # stood aside, not a NaN quote
+    # A normal book still quotes (guard does not over-fire on finite volatility).
+    q = AvellanedaStoikovMaker().decide(int(Regime.RANGE), 99.0, 101.0, 0.0)
+    assert q.two_sided
+
+
 def test_as_extreme_inventory_quotes_finite_and_uncrossed():
     q = AvellanedaStoikovMaker().decide(int(Regime.RANGE), 99.0, 101.0, inventory=1e9)
     if q.bid_px is not None and q.ask_px is not None:
