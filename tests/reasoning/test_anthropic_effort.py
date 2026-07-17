@@ -89,28 +89,46 @@ class TestEffortGate:
 
 
 @pytest.mark.unit
-class TestTemperatureEffortMutualExclusion:
-    """``temperature`` and ``effort`` are mutually exclusive per the Anthropic API.
-
-    Effort-capable models (Opus 4.7+ / Fable 5) REMOVE ``temperature`` and 400
-    when both are sent. ``get_llm`` must drop temperature when effort is active,
-    mirroring the effort gate (kai5-02).
+class TestSamplingParamGate:
+    """Opus 4.7+ *removed* the sampling params: ``temperature`` (top_p/top_k)
+    400 on those models UNCONDITIONALLY — with or without ``effort``. The gate is
+    model-based, not effort-based: Opus 4.5/4.6 and every Sonnet still accept
+    temperature, even alongside effort (kai6-00 corrected the round-5 kai5-02 gate).
     """
 
-    def test_effort_capable_model_does_not_receive_temperature(self, monkeypatch):
+    def test_opus_47plus_drops_temperature_even_without_effort(self, monkeypatch):
+        # The exact regression: a valid config (Opus 4.8, temperature, NO effort)
+        # must not send temperature — the round-5 gate wrongly kept it -> 400.
         captured = _capture_kwargs(monkeypatch)
         with pytest.warns(RuntimeWarning, match="temperature"):
             mod.AnthropicClient(
-                model="claude-opus-4-8", effort="high", temperature=0.2, api_key="x"
+                model="claude-opus-4-8", temperature=0.2, api_key="x"
+            ).get_llm()
+        assert "temperature" not in captured["kwargs"]
+
+    def test_opus_47plus_drops_temperature_with_effort_too(self, monkeypatch):
+        captured = _capture_kwargs(monkeypatch)
+        with pytest.warns(RuntimeWarning, match="temperature"):
+            mod.AnthropicClient(
+                model="claude-opus-4-7", effort="high", temperature=0.2, api_key="x"
             ).get_llm()
         assert "temperature" not in captured["kwargs"]
         assert captured["kwargs"]["effort"] == "high"
 
-    def test_temperature_kept_when_no_effort(self, monkeypatch):
-        """Without effort, temperature passes through unchanged."""
+    def test_opus_46_keeps_temperature_even_with_effort(self, monkeypatch):
+        # Opus 4.6 is effort-capable BUT still accepts temperature — the round-5
+        # effort-based gate wrongly dropped it here.
         captured = _capture_kwargs(monkeypatch)
         mod.AnthropicClient(
-            model="claude-opus-4-8", temperature=0.2, api_key="x"
+            model="claude-opus-4-6", effort="high", temperature=0.2, api_key="x"
+        ).get_llm()
+        assert captured["kwargs"]["temperature"] == 0.2
+        assert captured["kwargs"]["effort"] == "high"
+
+    def test_sonnet_keeps_temperature(self, monkeypatch):
+        captured = _capture_kwargs(monkeypatch)
+        mod.AnthropicClient(
+            model="claude-sonnet-4-6", effort="high", temperature=0.2, api_key="x"
         ).get_llm()
         assert captured["kwargs"]["temperature"] == 0.2
 

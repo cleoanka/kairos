@@ -47,3 +47,25 @@ def test_predictor_fail_safe_on_degenerate_features():
     bad = np.array([[np.nan] * FEATURE_DIM, [np.inf] * FEATURE_DIM], dtype=np.float32)
     out = p.predict_features(bad)
     assert (out == int(Regime.TOXIC)).all()
+
+
+def test_reject_mixed_provenance_run_id(tmp_path):
+    # A crash mid-persist can leave new latents beside old centroids; the shared
+    # run_id must let the loader reject that mixed model instead of loading it.
+    from kairos.perception.regime.predict import MixedModelError, _reject_mixed_provenance
+
+    lat = tmp_path / "latents.npz"
+    np.savez(lat, mu=np.zeros(2), sd=np.ones(2), run_id="RUN_A")
+
+    # Same run -> accepted.
+    np.savez(tmp_path / "rm_ok.npz", z_mean=np.zeros(2), run_id="RUN_A")
+    _reject_mixed_provenance(str(lat), np.load(tmp_path / "rm_ok.npz"))
+
+    # Different run -> rejected (mixed provenance).
+    np.savez(tmp_path / "rm_bad.npz", z_mean=np.zeros(2), run_id="RUN_B")
+    with pytest.raises(MixedModelError, match="mixed-provenance"):
+        _reject_mixed_provenance(str(lat), np.load(tmp_path / "rm_bad.npz"))
+
+    # Legacy artifact without a run_id -> accepted (backward-compatible).
+    np.savez(tmp_path / "rm_legacy.npz", z_mean=np.zeros(2))
+    _reject_mixed_provenance(str(lat), np.load(tmp_path / "rm_legacy.npz"))

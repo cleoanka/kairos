@@ -36,6 +36,22 @@ def _supports_effort(model: str) -> bool:
     return (major, minor) >= _EFFORT_MIN_VERSION[family]
 
 
+# Opus 4.7 *removed* the sampling parameters: temperature / top_p / top_k are
+# rejected with a 400 on Opus 4.7+ **unconditionally** — whether or not
+# ``effort`` is sent. This is a MODEL-based rule, not an effort-based one: Opus
+# 4.5/4.6 and every Sonnet still accept temperature (even alongside effort).
+_SAMPLING_REMOVED = re.compile(r"^claude-opus-(\d+)-(\d+)$")
+_SAMPLING_REMOVED_MIN = (4, 7)
+
+
+def _rejects_sampling_params(model: str) -> bool:
+    """Whether Anthropic 400s on temperature/top_p/top_k for this model."""
+    match = _SAMPLING_REMOVED.match(model.lower())
+    if not match:
+        return False
+    return (int(match.group(1)), int(match.group(2))) >= _SAMPLING_REMOVED_MIN
+
+
 class NormalizedChatAnthropic(ChatAnthropic):
     """ChatAnthropic with normalized content output.
 
@@ -62,23 +78,23 @@ class AnthropicClient(BaseLLMClient):
         if self.base_url:
             llm_kwargs["base_url"] = self.base_url
 
-        effort_active = "effort" in self.kwargs and _supports_effort(self.model)
+        rejects_sampling = _rejects_sampling_params(self.model)
 
         for key in _PASSTHROUGH_KWARGS:
             if key not in self.kwargs:
                 continue
             if key == "effort" and not _supports_effort(self.model):
                 continue
-            # Effort-capable models (Opus 4.7+ / Fable 5) REMOVE ``temperature``
-            # (400 invalid_request_error). ``effort`` and ``temperature`` are
-            # mutually exclusive per the API, so drop temperature when effort is
-            # active — mirroring the effort skip above (kai5-02).
-            if key == "temperature" and effort_active:
+            # Opus 4.7+ REMOVED the sampling params: ``temperature`` 400s on those
+            # models regardless of whether ``effort`` is set. Drop it for exactly
+            # those models (Opus 4.5/4.6 and Sonnet still accept temperature). The
+            # gate is model-based, not effort-based (kai6-00 fixed the round-5
+            # effort-based version, which both missed Opus 4.7+temperature-no-effort
+            # and wrongly dropped temperature on Opus 4.5/4.6).
+            if key == "temperature" and rejects_sampling:
                 warnings.warn(
-                    (
-                        f"Dropping 'temperature' for model '{self.model}': it is "
-                        f"mutually exclusive with 'effort', which is active."
-                    ),
+                    f"Dropping 'temperature' for model '{self.model}': Opus 4.7+ "
+                    f"rejects sampling parameters (temperature/top_p/top_k).",
                     RuntimeWarning,
                     stacklevel=2,
                 )
