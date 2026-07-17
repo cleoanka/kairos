@@ -131,6 +131,18 @@ class TestTradingMemoryLogCore:
         log.store_decision("NVDA", "2026-01-10", DECISION_BUY)
         assert len(log.load_entries()) == 1
 
+    def test_store_does_not_resurrect_resolved_entry(self, tmp_path):
+        """A same-(date, ticker) re-run after resolution must not append a fresh
+        pending — a terminal resolved entry stays terminal, not double-counted."""
+        log = make_log(tmp_path)
+        log.store_decision("NVDA", "2026-01-10", DECISION_BUY)
+        log.update_with_outcome("NVDA", "2026-01-10", 0.05, 0.02, 5, "Correct call.")
+        # Re-run for the already-resolved date: guard must suppress the append.
+        log.store_decision("NVDA", "2026-01-10", DECISION_BUY)
+        entries = log.load_entries()
+        assert len(entries) == 1
+        assert not any(e["pending"] for e in entries)
+
     def test_batch_update_resolves_multiple_entries(self, tmp_path):
         """batch_update_with_outcomes resolves multiple pending entries in one write."""
         log = make_log(tmp_path)

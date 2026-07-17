@@ -51,11 +51,16 @@ class TradingMemoryLog:
             return
         ticker = self._sanitize_ticker(ticker)
         final_trade_decision = self._sanitize_field(final_trade_decision)
-        # Idempotency guard: fast raw-text scan instead of full parse
+        # Idempotency guard: fast raw-text scan instead of full parse. Any
+        # existing real tag line for (trade_date, ticker) suppresses the append
+        # — pending OR resolved — so a re-run never resurrects a terminal
+        # resolved entry into a second pending (which would be double-counted).
+        # A defused injected line begins with "(", not "[", so it can't match.
         if self._log_path.exists():
             raw = self._log_path.read_text(encoding="utf-8")
+            prefix = f"[{trade_date} | {ticker} |"
             for line in raw.splitlines():
-                if line.startswith(f"[{trade_date} | {ticker} |") and line.endswith("| pending]"):
+                if line.startswith(prefix) and line.rstrip().endswith("]"):
                     return
         rating = parse_rating(final_trade_decision)
         tag = f"[{trade_date} | {ticker} | {rating} | pending]"
