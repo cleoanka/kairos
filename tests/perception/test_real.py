@@ -47,3 +47,40 @@ def test_build_real_model_round_trip(tmp_path, monkeypatch):
     pred = p.predict_features(X)
     assert pred.shape == (len(df),)
     assert {int(v) for v in pred} <= {0, 1, 2}
+
+
+@pytest.mark.mlx
+def test_build_real_model_crash_leaves_prior_model_intact(tmp_path, monkeypatch):
+    """A crash mid-persist must never leave a mixed-provenance model (new encoder
+    + old centroids) on disk: staging every file to a temp and only os.replace-ing
+    after ALL temps are written means a failed rebuild leaves the prior good model
+    byte-for-byte intact (no orphaned temps, no partial overwrite)."""
+    pytest.importorskip("mlx.core")  # build_real_model trains the encoder (MLX)
+    import kairos.perception.real as real
+    monkeypatch.setattr(real, "REAL_DIR", tmp_path)
+
+    real.build_real_model(generate(n_steps=800, seed=2), epochs=10)  # good model
+    names = ("lob_encoder.safetensors", "latents.npz", "regime_model.npz")
+    before = {f: (tmp_path / f).read_bytes() for f in names}
+
+    # Rebuild from a DIFFERENT dataset so the new weights/latents differ from the
+    # good ones — the non-atomic overwrite this fix removes would be detectable.
+    # Fail on the second np.savez (the regime-model temp), i.e. after the encoder
+    # and latents temps are staged but before any file is swapped into place.
+    real_savez = np.savez
+    calls = {"n": 0}
+
+    def flaky_savez(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("disk full")
+        return real_savez(*args, **kwargs)
+
+    monkeypatch.setattr(real.np, "savez", flaky_savez)
+    with pytest.raises(OSError):
+        real.build_real_model(generate(n_steps=800, seed=7), epochs=10)
+
+    # Prior good model untouched, and no orphaned temp left behind.
+    for f in names:
+        assert (tmp_path / f).read_bytes() == before[f]
+    assert not list(tmp_path.glob("*.tmp*"))

@@ -21,6 +21,9 @@ matrix X. Evaluation against ground-truth regimes happens in
 from __future__ import annotations
 
 import argparse
+import contextlib
+import os
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -241,13 +244,36 @@ def main(argv: list[str] | None = None) -> int:
     z = embed(model, X, stats)
 
     args.latents.parent.mkdir(parents=True, exist_ok=True)
-    # Carry ts/mid (NOT regime) so the embedder stays strictly label-free.
-    np.savez(
-        args.latents, z=z.astype(np.float32),
-        ts=df["ts"].to_numpy(np.float32), mid=df["mid"].to_numpy(np.float32),
-        mu=stats["mu"], sd=stats["sd"], final_loss=np.float32(history[-1]),
-    )
-    model.save_weights(str(args.weights))
+    args.weights.parent.mkdir(parents=True, exist_ok=True)
+    # Latents/stats and encoder weights are ONE coherent model; a crash between
+    # the two in-place writes would leave mismatched files that load silently.
+    # Stage each to a unique pid+uuid temp and os.replace them into place only
+    # after BOTH are written, so a crash never overwrites a good file with a
+    # partial one; a shared run_id lets a later load reject a mixed set. Temps
+    # are cleaned on any BaseException. See stockstats_utils.py for the pattern.
+    run_id = uuid.uuid4().hex
+    stem = f"{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    # save_weights / np.savez validate the extension, so put the unique stem
+    # *before* the real suffix so each temp still ends in .npz / .safetensors.
+    l_tmp = f"{args.latents}.{stem}.npz"
+    w_tmp = f"{args.weights}.{stem}.safetensors"
+    try:
+        # Carry ts/mid (NOT regime) so the embedder stays strictly label-free.
+        np.savez(
+            l_tmp, z=z.astype(np.float32),
+            ts=df["ts"].to_numpy(np.float32), mid=df["mid"].to_numpy(np.float32),
+            mu=stats["mu"], sd=stats["sd"], final_loss=np.float32(history[-1]),
+            run_id=run_id,
+        )
+        model.save_weights(w_tmp)
+        # Only now that both temps are fully written do we swap them into place.
+        os.replace(l_tmp, args.latents)
+        os.replace(w_tmp, args.weights)
+    except BaseException:
+        for tmp in (l_tmp, w_tmp):
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+        raise
     print(f"saved latents {z.shape} -> {args.latents}; weights -> {args.weights}")
     print(f"final masked-recon loss: {history[-1]:.5f}")
     return 0
