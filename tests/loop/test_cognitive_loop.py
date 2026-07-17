@@ -87,10 +87,9 @@ def test_shared_perception_restores_original_when_body_raises():
     the finally has to run unconditionally so a failed run never leaves the
     memoized wrapper installed to poison the next run."""
     real = el.perceive_regimes
-    with pytest.raises(RuntimeError, match="boom"):
-        with cl._shared_perception():
-            assert el.perceive_regimes is not real     # wrapper is installed inside
-            raise RuntimeError("boom mid-run")
+    with pytest.raises(RuntimeError, match="boom"), cl._shared_perception():
+        assert el.perceive_regimes is not real     # wrapper is installed inside
+        raise RuntimeError("boom mid-run")
     assert el.perceive_regimes is real                 # and restored on the error path
 
 
