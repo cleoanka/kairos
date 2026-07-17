@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from kairos.perception.execution.risk import RiskGate
 from kairos.perception.execution.simulator import run_backtest
 from kairos.perception.schema import Regime
 from kairos.perception.strategy.avellaneda import AvellanedaStoikovMaker
-from kairos.perception.strategy.maker import MakerStrategy, Quote
+from kairos.perception.strategy.maker import Maker, MakerStrategy, Quote
 
 
 # --- maker decisions ---------------------------------------------------------
@@ -44,6 +45,21 @@ def test_maker_trend_is_reduce_only():
     assert sht.bid_sz > 0 and sht.ask_sz == 0.0   # short -> buy-only (flatten)
 
 
+@pytest.mark.parametrize("maker", [MakerStrategy(), AvellanedaStoikovMaker()])
+@pytest.mark.parametrize("best_bid, best_ask", [
+    (99.0, 101.0),    # normal book
+    (100.0, 100.0),   # locked book
+    (101.0, 99.0),    # crossed book — negative/corrupt offset
+])
+@pytest.mark.parametrize("inventory", [-15.0, 0.0, 15.0])
+@pytest.mark.parametrize("regime", [int(Regime.RANGE), int(Regime.TREND)])
+def test_maker_never_crosses(maker, best_bid, best_ask, inventory, regime):
+    # Structural defense: for ANY finite book (including crossed inputs) the two
+    # legs must not cross — bid_px <= ask_px whenever both sides are quoted.
+    q = maker.decide(regime, best_bid, best_ask, inventory)
+    assert q.bid_px is None or q.ask_px is None or q.bid_px <= q.ask_px
+
+
 # --- Avellaneda-Stoikov maker ------------------------------------------------
 def test_as_maker_pulls_in_toxic():
     q = AvellanedaStoikovMaker().decide(int(Regime.TOXIC), 99.0, 101.0, 0.0)
@@ -69,6 +85,44 @@ def test_as_reservation_skews_down_when_long():
 def test_as_trend_reduce_only():
     lng = AvellanedaStoikovMaker().decide(int(Regime.TREND), 99.0, 101.0, 5.0)
     assert lng.ask_sz > 0 and lng.bid_sz == 0.0
+
+
+@pytest.mark.parametrize("gamma, k", [
+    (0.02, 0.0),     # zero intensity -> would divide by zero
+    (0.02, -0.02),   # negative intensity where 1 + gamma/k <= 0 -> log domain error
+    (0.02, -1.0),    # more-negative intensity
+    (0.0, 0.5),      # zero risk-aversion -> would divide by zero in the log term
+    (-0.1, 0.5),     # negative risk-aversion
+])
+def test_as_degenerate_spread_params_stand_aside(gamma, k):
+    # k (intensity) and gamma (risk-aversion) are free, swept config knobs; a
+    # non-positive value makes the closed-form half-spread ill-defined (÷0 or a
+    # log-domain error). Fail safe to a stand-aside quote rather than crash the
+    # decision (and, via grid_search, abort the whole sweep).
+    q = AvellanedaStoikovMaker(gamma=gamma, k=k).decide(int(Regime.RANGE), 99.0, 101.0, 0.0)
+    assert q.bid_px is None and q.ask_px is None and not q.two_sided
+
+
+def test_as_positive_spread_params_still_quote():
+    # Guard must not over-fire: any strictly-positive (gamma, k) still quotes.
+    q = AvellanedaStoikovMaker(gamma=0.02, k=1e-9).decide(int(Regime.RANGE), 99.0, 101.0, 0.0)
+    assert q.two_sided and q.ask_px > q.bid_px
+
+
+def test_as_maker_has_no_inert_tick_param():
+    # The A-S maker quotes purely from the reservation price/half-spread clamped
+    # to the touch — it never snaps to a grid — so it must not carry an inert
+    # `tick` field whose name would mislead readers into thinking it does.
+    with pytest.raises(TypeError):
+        AvellanedaStoikovMaker(tick=1.0)
+    assert not hasattr(AvellanedaStoikovMaker(), "tick")
+
+
+def test_makers_satisfy_maker_protocol():
+    # run_backtest is typed against the structural Maker contract; every maker it
+    # is fed must satisfy it (baseline skew-maker and the A-S sibling alike).
+    assert isinstance(MakerStrategy(), Maker)
+    assert isinstance(AvellanedaStoikovMaker(), Maker)
 
 
 # --- risk gate ---------------------------------------------------------------

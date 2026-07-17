@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 
 import requests
 
+from ._redact import redact_secrets
 from .errors import VendorNotConfiguredError
 
 logger = logging.getLogger(__name__)
@@ -115,12 +116,26 @@ def _resolve_series_id(indicator: str) -> str:
     return candidate
 
 
+class FredRequestError(Exception):
+    """A network/HTTP failure talking to FRED, with the API key redacted.
+
+    A raw ``requests`` exception echoes the request URL — including
+    ``api_key=...`` — so we re-raise this key-free type instead.
+    """
+
+
 def _request(path: str, params: dict) -> dict:
     """GET a FRED endpoint, surfacing FRED's JSON error body on a bad request."""
-    api_params = {**params, "api_key": get_api_key(), "file_type": "json"}
-    response = requests.get(
-        f"{FRED_API_BASE}/{path}", params=api_params, timeout=REQUEST_TIMEOUT
-    )
+    api_key = get_api_key()
+    api_params = {**params, "api_key": api_key, "file_type": "json"}
+    try:
+        response = requests.get(
+            f"{FRED_API_BASE}/{path}", params=api_params, timeout=REQUEST_TIMEOUT
+        )
+    except requests.exceptions.RequestException as e:
+        # The request URL carries api_key=...; redact before the exception text
+        # can reach a log or the agent-facing data channel.
+        raise FredRequestError(redact_secrets(f"{type(e).__name__}: {e}", api_key)) from None
     # FRED returns 400 with a JSON {"error_message": ...} for unknown series IDs
     # or malformed params; turn that into a clear, actionable error.
     if response.status_code == 400:
@@ -128,8 +143,11 @@ def _request(path: str, params: dict) -> dict:
             message = response.json().get("error_message", response.text)
         except ValueError:
             message = response.text
-        raise ValueError(f"FRED request failed: {message}")
-    response.raise_for_status()
+        raise ValueError(f"FRED request failed: {redact_secrets(message, api_key)}")
+    try:
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        raise FredRequestError(redact_secrets(f"{type(e).__name__}: {e}", api_key)) from None
     return response.json()
 
 

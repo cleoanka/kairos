@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 from ..schema import Regime
 
@@ -27,6 +28,17 @@ class Quote:
     @property
     def two_sided(self) -> bool:
         return self.bid_px is not None and self.ask_px is not None
+
+
+@runtime_checkable
+class Maker(Protocol):
+    """Structural contract every maker satisfies: regime + touch + inventory ->
+    a resting Quote. Lets run_backtest accept any maker (the baseline skew-maker
+    below or the Avellaneda-Stoikov sibling) soundly, without nominal inheritance."""
+
+    def decide(self, regime: int, best_bid: float, best_ask: float,
+               inventory: float) -> Quote:
+        ...
 
 
 class MakerStrategy:
@@ -54,9 +66,13 @@ class MakerStrategy:
                          best_ask if ask_sz > 0 else None, ask_sz)
 
         # RANGE — tight two-sided liquidity, inventory-skewed to mean-revert.
+        mid = 0.5 * (best_bid + best_ask)
         spread = best_ask - best_bid
         improve = self.tick if spread > 2 * self.tick else 0.0
         skew = max(-1.0, min(1.0, inventory / self.max_inv))  # long -> less bid/more ask
         bid_sz = max(0.0, self.base_size * (1.0 - skew))
         ask_sz = max(0.0, self.base_size * (1.0 + skew))
-        return Quote(best_bid + improve, bid_sz, best_ask - improve, ask_sz)
+        # Clamp to mid so quotes never cross (a crossed/negative-offset input book
+        # would otherwise yield bid_px > ask_px) — mirrors the A-S maker's defense.
+        return Quote(min(best_bid + improve, mid), bid_sz,
+                     max(best_ask - improve, mid), ask_sz)

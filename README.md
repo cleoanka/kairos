@@ -42,7 +42,7 @@ Kairos keeps **both**, and wires them together the way a mind does:
 
 <p align="center">
   <img src="docs/images/regime_separation.png" width="82%" alt="System-1 separates regimes with no labels">
-  <br><em>System 1 is a self-supervised order-book model that learns to tell RANGE, TREND and TOXIC (spoofed) markets apart <b>with no labels</b> — out-of-sample ARI ≈ 0.99.</em>
+  <br><em>System 1 is a self-supervised order-book model that learns to tell RANGE, TREND and TOXIC (spoofed) markets apart <b>with no labels</b> — out-of-sample ARI ≈ 0.90 on unseen market seeds (≈0.999 linear separability; 0.99 is the in-sample/transductive figure).</em>
 </p>
 
 The hard part is the **join**. If you let the slow, deliberate System 2 read market data freely, it *cheats*: an agent reasoning "as of 2024-05-10" calls a data vendor that quietly hands back revised fundamentals, forward-adjusted prices, or "latest" news — and your backtest inflates. This look-ahead bias is the quiet killer of agentic backtests.
@@ -72,7 +72,7 @@ No API keys, no GPU, no market-data account — the whole loop runs on synthetic
 ```bash
 git clone https://github.com/cleoanka/kairos && cd kairos
 make install          # core only (numpy/pandas/sklearn) — portable, no keys
-make gate             # soul_check + 100 core tests + loop smoke  → all green
+make gate             # soul_check + 220 core tests + loop smoke  → all green
 
 kairos loop --scenario range     # perceive → reason → act → reflect
 ```
@@ -84,9 +84,9 @@ Kairos cognitive loop — BTCUSDT (scenario=range, mode=deterministic)
   System-1 percept : RANGE / NEUTRAL (conf 93%, tox 0.00)
   System-2 stance  : HOLD @ conviction 0.00 (source=deterministic-policy)
   Execution        : PnL +893.1, 895 fills, inv -9.00, halted=False
-  System-1 veto    : 0% of the window perceived TOXIC
-  Edge vs stand-aside: +0.0
-  Baselines        : stand_aside=+893, naive_long=+86, pure_market_making=+893
+  System-1 veto    : 0% of the window perceived TOXIC (dominated=False)
+  Edge vs stand-aside: +893.1
+  Baselines        : stand_aside=+0, naive_long=+86, pure_market_making=+893
 ```
 
 ## 📦 Installation
@@ -185,7 +185,7 @@ final_state, decision = ta.propagate(
 - **TREND** — one-sided aggressive flow is eating the book; don't fade it.
 - **TOXIC** — displayed liquidity is *phantom* (spoofing / mass cancels); stand aside.
 
-The regime label is **evaluation-only** — it never enters a training loss (Constitution Rule 4). That's what makes the ARI ≈ 0.99 separation above an honest result and not circular.
+The regime label is **evaluation-only** — it never enters a training loss (Constitution Rule 4). That's what makes the separation above an honest result and not circular: on a **freshly-seeded, unseen** market stream the frozen encoder still recovers the three regimes at **out-of-sample ARI ≈ 0.90** (0.87–0.92 across seeds; ≈0.999 linear separability). The **0.99** you'll see in `artifacts/report.json` is the *in-sample / transductive* number (same stream trained and scored) — reproduce the out-of-sample figure with `python -m kairos.perception.regime.evaluate --seed 13`.
 
 ### 2 · The Causal Perception Bus — closing the look-ahead hole *by construction*
 
@@ -257,7 +257,7 @@ src/kairos/
 src/cpp, src/bindings   C++ zero-copy ring
 scripts/         soul_check.py · reproduce.py · make_readme_figures.py · build_cpp.sh
 docs/            ARCHITECTURE · PHILOSOPHY · CAUSALITY · HOW_IT_WORKS  (+ images/)
-tests/           bridge · loop · perception · reasoning   (598 passing, 14 skipped)
+tests/           bridge · loop · perception · reasoning   (792 passing, 14 skipped)
 ```
 
 ## 📚 Documentation

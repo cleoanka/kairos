@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
+import os
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -52,26 +55,60 @@ def record(url: str, symbol: str, n: int, tick_size: float, out: Path) -> pd.Dat
 def build_real_model(df: pd.DataFrame, epochs: int = 120, k: int = 3) -> dict:
     from sklearn.cluster import KMeans
 
-    from .models.embedder import embed, train
+    from .models.embedder import embed, save_weights_with_run_id, train
 
     X, _ = featurize(df)
     model, stats, _ = train(X, epochs=epochs)
     z = embed(model, X, stats)
 
-    REAL_DIR.mkdir(parents=True, exist_ok=True)
-    np.savez(REAL_DIR / "latents.npz", z=z.astype(np.float32),
-             mu=stats["mu"], sd=stats["sd"])
-    model.save_weights(str(REAL_DIR / "lob_encoder.safetensors"))
-
     zs = (z - z.mean(0)) / (z.std(0) + 1e-6)
     km = KMeans(n_clusters=k, n_init=10, random_state=0)
     pred = km.fit_predict(zs)
     c2r = name_clusters_by_signature(X, pred, k)
-    np.savez(REAL_DIR / "regime_model.npz",
-             z_mean=z.mean(0).astype(np.float32),
-             z_std=(z.std(0) + 1e-6).astype(np.float32),
-             centroids=km.cluster_centers_.astype(np.float32),
-             cluster_to_regime=np.array([c2r[c] for c in range(k)], dtype=np.int64))
+
+    # The three files (encoder weights, latents/stats, regime centroids+map) are
+    # ONE coherent model — a crash between two in-place writes would leave a new
+    # encoder next to old centroids, which has_real_model() still reports valid
+    # and RegimePredictor loads silently, driving a wrong TOXIC veto. Stage each
+    # to a unique pid+uuid temp and os.replace them into place only after ALL are
+    # written, so a crash can never overwrite a good file with a partial one; a
+    # shared run_id stamped in all three files (the encoder's goes in the
+    # safetensors metadata) lets a load reject a mixed set — critical here because
+    # this path swaps weights FIRST, so a crash before the latents/regime swap
+    # would otherwise leave a NEW encoder past the two-npz guard. Temps are cleaned
+    # on any BaseException (their unique suffix means nothing else would ever
+    # reclaim an orphan). See stockstats_utils.py for the pattern.
+    REAL_DIR.mkdir(parents=True, exist_ok=True)
+    weights_path = REAL_DIR / "lob_encoder.safetensors"
+    latents_path = REAL_DIR / "latents.npz"
+    regime_path = REAL_DIR / "regime_model.npz"
+    run_id = uuid.uuid4().hex
+    stem = f"{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    # save_weights / np.savez validate the extension, so put the unique stem
+    # *before* the real suffix so each temp still ends in .safetensors / .npz.
+    staged = [
+        (f"{weights_path}.{stem}.safetensors", weights_path),
+        (f"{latents_path}.{stem}.npz", latents_path),
+        (f"{regime_path}.{stem}.npz", regime_path),
+    ]
+    try:
+        save_weights_with_run_id(model, staged[0][0], run_id)
+        np.savez(staged[1][0], z=z.astype(np.float32),
+                 mu=stats["mu"], sd=stats["sd"], run_id=run_id)
+        np.savez(staged[2][0],
+                 z_mean=z.mean(0).astype(np.float32),
+                 z_std=(z.std(0) + 1e-6).astype(np.float32),
+                 centroids=km.cluster_centers_.astype(np.float32),
+                 cluster_to_regime=np.array([c2r[c] for c in range(k)], dtype=np.int64),
+                 run_id=run_id)
+        # Only now that every temp is fully written do we swap them into place.
+        for tmp, dst in staged:
+            os.replace(tmp, dst)
+    except BaseException:
+        for tmp, _dst in staged:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+        raise
 
     named = np.array([c2r[c] for c in pred])
     sig = cluster_signatures(X, pred, k)

@@ -1,7 +1,7 @@
 """yfinance-based news data fetching functions."""
 
 import contextlib
-from datetime import datetime
+from datetime import datetime, timezone
 
 import yfinance as yf
 from dateutil.relativedelta import relativedelta
@@ -47,7 +47,11 @@ def _extract_article_data(article: dict) -> dict:
         ts = article.get("providerPublishTime")
         if ts:
             with contextlib.suppress(ValueError, OSError, TypeError):
-                pub_date = datetime.fromtimestamp(ts)
+                # providerPublishTime is a true UTC UNIX epoch — parse it on the
+                # same UTC frame as the nested ISO path, otherwise the flat path
+                # would be LOCAL and the window filter would leak future news on
+                # a host behind UTC (reintroducing #992/#1007).
+                pub_date = datetime.fromtimestamp(ts, tz=timezone.utc)
         return {
             "title": article.get("title", "No title"),
             "summary": article.get("summary", ""),
@@ -68,7 +72,9 @@ def _in_news_window(pub_date, start_dt, end_dt) -> bool:
     if pub_date is not None:
         naive = pub_date.replace(tzinfo=None) if hasattr(pub_date, "replace") else pub_date
         return start_dt <= naive <= end_dt + relativedelta(days=1)
-    return end_dt >= datetime.now() - relativedelta(days=1)
+    # Compare "now" on the same UTC frame as the (UTC) pub_date branch above.
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    return end_dt >= now_utc - relativedelta(days=1)
 
 
 def get_news_yfinance(

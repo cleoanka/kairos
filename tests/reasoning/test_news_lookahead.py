@@ -4,6 +4,7 @@ into a historical window.
 Regressions for #992 (flat articles bypassed the date filter), #1007 (global
 news injected future articles), #993 (empty-after-filter returned a blank body).
 """
+import calendar
 import time
 from datetime import datetime
 
@@ -12,8 +13,11 @@ import pytest
 import kairos.reasoning.dataflows.yfinance_news as ynews
 
 
-def _epoch(date_str):
-    return int(time.mktime(datetime.strptime(date_str, "%Y-%m-%d").timetuple()))
+def _epoch(date_str, hour=0):
+    # providerPublishTime is a UTC UNIX epoch — pin the frame with calendar.timegm
+    # (UTC), not time.mktime (LOCAL), so the flat/nested TZ divergence is exercised
+    # (a LOCAL epoch would cancel against a LOCAL flat parse and hide the leak).
+    return calendar.timegm(datetime(*map(int, date_str.split("-")), hour).timetuple())
 
 
 @pytest.mark.unit
@@ -24,6 +28,32 @@ def test_flat_article_publish_time_is_parsed():
     )
     assert data["pub_date"] is not None
     assert data["pub_date"].strftime("%Y-%m-%d") == "2025-05-09"
+
+
+@pytest.mark.unit
+def test_flat_publish_time_is_utc_not_host_local(monkeypatch):
+    # Flat and nested paths must land on the SAME (UTC) frame. An article
+    # published 2024-01-11 02:00 UTC sits *past* an end_date=2024-01-10 window
+    # (upper bound 2024-01-11 00:00 UTC), so it must be excluded on every host.
+    # Under the old LOCAL parse, a host behind UTC (e.g. America/Los_Angeles)
+    # would read it as 2024-01-10 18:00 and leak it — the #992/#1007 look-ahead.
+    if not hasattr(time, "tzset"):  # pragma: no cover - Windows has no tzset
+        pytest.skip("tzset unavailable on this platform")
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    time.tzset()
+    try:
+        data = ynews._extract_article_data(
+            {"title": "POST", "publisher": "P", "link": "l",
+             "providerPublishTime": _epoch("2024-01-11", hour=2)}
+        )
+        # UTC parse preserves the true 02:00 UTC wall-clock (not shifted to local).
+        assert data["pub_date"].strftime("%Y-%m-%d %H") == "2024-01-11 02"
+        start = datetime(2024, 1, 1)
+        end = datetime(2024, 1, 10)
+        assert ynews._in_news_window(data["pub_date"], start, end) is False  # leak blocked
+    finally:
+        monkeypatch.delenv("TZ", raising=False)
+        time.tzset()
 
 
 @pytest.mark.unit

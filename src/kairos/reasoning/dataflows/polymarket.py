@@ -39,9 +39,13 @@ def _parse_json_list(value) -> list:
     if isinstance(value, list):
         return value
     try:
-        return json.loads(value)
+        result = json.loads(value)
     except (json.JSONDecodeError, TypeError):
         return []
+    # The untrusted Gamma payload may encode a JSON scalar/object rather than an
+    # array; anything but a list is unusable here (the caller subscripts it), so
+    # skip that one market instead of letting prices[0]/outcomes[0] abort the run.
+    return result if isinstance(result, list) else []
 
 
 def _is_forward_looking(market: dict, now: datetime) -> bool:
@@ -58,7 +62,10 @@ def _is_forward_looking(market: dict, now: datetime) -> bool:
         try:
             if datetime.fromisoformat(end_date.replace("Z", "+00:00")) < now:
                 return False
-        except ValueError:
+        except (ValueError, AttributeError, TypeError):
+            # A malformed endDate (unparseable string, or a non-string like
+            # null/number) is unusable, not fatal — skip the date check for this
+            # one market rather than discarding the whole batch.
             pass
     return bool(_parse_json_list(market.get("outcomePrices"))) and bool(
         _parse_json_list(market.get("outcomes"))
@@ -120,11 +127,16 @@ def get_prediction_markets(topic: str, limit: int | None = None) -> str:
         outcomes = _parse_json_list(m.get("outcomes"))
         try:
             prob = float(prices[0])
-        except (ValueError, IndexError):
+        except (ValueError, IndexError, TypeError):
+            # prices may be an empty list (IndexError), a non-numeric string
+            # (ValueError), or a list whose first element is itself an
+            # object/null/array (TypeError) — the untrusted Gamma payload isn't
+            # guaranteed to hold scalars. Skip that one market, not the batch.
             continue
         label = outcomes[0] if outcomes else "Yes"
         volume = m.get("volumeNum") or 0
-        end_date = (m.get("endDate") or "")[:10]
+        raw_end = m.get("endDate")
+        end_date = raw_end[:10] if isinstance(raw_end, str) else ""
         wk = m.get("oneWeekPriceChange")
         wk_str = (
             f", 1-week {wk * 100:+.1f}pp"

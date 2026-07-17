@@ -13,6 +13,7 @@ import pytest
 from kairos.bridge.causal_bus import (
     CausalPerceptionBus,
     ClockDomainError,
+    LookAheadError,
     infer_clock,
     resolve_cutoff,
     to_epoch,
@@ -65,6 +66,35 @@ def test_append_independence():
         assert after.ts == snapshot[c].ts, f"past query {c} changed after future appended"
 
 
+def test_window_before_and_aggregate_before_are_append_independent_under_fuzz():
+    """Append-independence holds for the OTHER two causal reads too, not just
+    ``as_of``: over randomised op sequences, snapshotting ``window_before`` and
+    ``aggregate_before`` before appending random future percepts must reproduce
+    bit-identically afterwards (frozen Percepts / plain dicts compare by value)."""
+    rng = random.Random(4321)
+    for _ in range(200):
+        bus = CausalPerceptionBus(strict=True)
+        t = 0.0
+        for _ in range(rng.randint(1, 60)):
+            t += rng.random() * 3
+            bus.record(make_percept(round(t, 6), regime=rng.randint(0, 2)))
+        # Snapshot a batch of past reads before the future exists.
+        queries = [(rng.uniform(-1, t), rng.randint(1, 8), rng.uniform(0.1, t + 1))
+                   for _ in range(20)]
+        windows = [bus.window_before(q, n=n) for q, n, _ in queries]
+        aggs = [bus.aggregate_before(q, horizon=h) for q, _, h in queries]
+
+        # Append a lot of monotone "future" and re-read the same past queries.
+        for _ in range(rng.randint(1, 60)):
+            t += rng.random() * 3
+            bus.record(make_percept(round(t, 6), regime=rng.randint(0, 2)))
+        for (q, n, h), win, agg in zip(queries, windows, aggs, strict=True):
+            assert bus.window_before(q, n=n) == win, \
+                f"window_before({q}, n={n}) changed after future appended"
+            assert bus.aggregate_before(q, horizon=h) == agg, \
+                f"aggregate_before({q}, horizon={h}) changed after future appended"
+
+
 def test_window_before_is_causal():
     bus = CausalPerceptionBus()
     for t in range(0, 100):
@@ -86,6 +116,30 @@ def test_aggregate_before_is_causal():
     assert agg["n"] <= 21  # window (60, 80] inclusive
     # every counted percept is causal — reconstruct and check the max ts
     assert bus.aggregate_before(-1.0, horizon=5.0) is None
+
+
+def test_aggregate_before_rejects_non_finite_horizon():
+    """A non-finite horizon can't scope a window — +inf spans the whole causal
+    history, NaN empties it — so the bus rejects it for EVERY caller, not just
+    the tool layer. The ValueError is what the tool already fails closed on."""
+    bus = CausalPerceptionBus()
+    for t in range(0, 100):
+        bus.record(make_percept(float(t), regime=t % 3))
+    for bad in (float("inf"), float("-inf"), float("nan")):
+        with pytest.raises(ValueError, match="non-finite horizon"):
+            bus.aggregate_before(80.0, bad)
+
+
+def test_aggregate_before_non_positive_horizon_is_unavailable():
+    """A non-positive look-back describes an empty window: fail closed to None
+    ("perception unavailable") rather than return a degenerate read."""
+    bus = CausalPerceptionBus()
+    for t in range(0, 100):
+        bus.record(make_percept(float(t), regime=t % 3))
+    assert bus.aggregate_before(80.0, 0.0) is None
+    assert bus.aggregate_before(80.0, -5.0) is None
+    # A valid positive horizon is unaffected — the recent window still reads.
+    assert bus.aggregate_before(80.0, 20.0) is not None
 
 
 def test_out_of_order_record_rejected():
@@ -181,3 +235,70 @@ def test_empty_bus_returns_none_not_error():
     assert bus.window_before(123.0) == []
     assert bus.aggregate_before(123.0, 10.0) is None
     assert len(bus) == 0
+
+
+# --- Non-finite cutoffs: the NaN look-ahead hole (regression) ----------------
+# A NaN cutoff is uniquely dangerous: every `x < nan` is False, so bisect lands
+# past the end and as_of would return the NEWEST percept — maximal look-ahead —
+# with the strict `p.ts > cutoff` guard also bypassed (`x > nan` is False).
+# +inf returns the newest percept too; -inf empties every window. All must fail
+# closed rather than silently leak. See resolve_cutoff._require_finite.
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_resolve_cutoff_rejects_non_finite_number(bad):
+    with pytest.raises(LookAheadError):
+        resolve_cutoff(bad)
+
+
+@pytest.mark.parametrize("bad", ["nan", "NaN", "inf", "-inf", "  nan  ", "Infinity"])
+def test_resolve_cutoff_rejects_non_finite_string(bad):
+    # The stringified forms float()-parse; they must be rejected, NOT re-read as
+    # a date (which would raise a confusing ValueError from fromisoformat).
+    with pytest.raises(LookAheadError):
+        resolve_cutoff(bad)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), "nan", "inf"])
+def test_as_of_rejects_non_finite_query_instead_of_leaking(bad):
+    bus = CausalPerceptionBus()
+    for t in range(0, 10):
+        bus.record(make_percept(float(t)))
+    with pytest.raises(LookAheadError):
+        bus.as_of(bad)
+    with pytest.raises(LookAheadError):
+        bus.window_before(bad, 10)
+    with pytest.raises(LookAheadError):
+        bus.aggregate_before(bad, 5.0)
+
+
+def test_as_of_non_finite_on_epoch_clock_also_rejected():
+    # Same guarantee on a realistic wall-clock bus (not just the index clock).
+    bus = CausalPerceptionBus()
+    base = 1_700_000_000.0
+    for h in range(10):
+        bus.record(make_percept(base + h * 3600))
+    with pytest.raises(LookAheadError):
+        bus.as_of(float("nan"))
+    with pytest.raises(LookAheadError):
+        bus.as_of("nan")
+
+
+def test_record_rejects_non_finite_ts():
+    bus = CausalPerceptionBus()
+    with pytest.raises(ValueError, match="non-finite"):
+        bus.record(make_percept(float("nan")))
+    with pytest.raises(ValueError, match="non-finite"):
+        bus.record(make_percept(float("inf")))
+    # A NaN first ts must not poison clock inference or the ordering guard.
+    assert bus.clock is None
+    assert len(bus) == 0
+
+
+def test_non_finite_never_poisons_a_populated_bus():
+    # Regression for the record() bypass: a NaN ts slips past `ts < last` (that
+    # comparison is False), so without the guard it would append out of order.
+    bus = CausalPerceptionBus()
+    bus.record(make_percept(5.0))
+    with pytest.raises(ValueError, match="non-finite"):
+        bus.record(make_percept(float("nan")))
+    assert [p.ts for p in bus.window_before(1e9, 10)] == [5.0]

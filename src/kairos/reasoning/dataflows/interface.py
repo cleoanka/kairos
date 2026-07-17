@@ -193,6 +193,7 @@ def route_to_vendor(method: str, *args, **kwargs):
         vendor_chain = all_available_vendors
 
     last_no_data: NoMarketDataError | None = None
+    last_rate_limit: VendorRateLimitError | None = None
     first_error: Exception | None = None
     for vendor in vendor_chain:
         vendor_impl = VENDOR_METHODS[method][vendor]
@@ -200,9 +201,10 @@ def route_to_vendor(method: str, *args, **kwargs):
 
         try:
             return impl_func(*args, **kwargs)
-        except VendorRateLimitError:
+        except VendorRateLimitError as e:
             logger.warning("Vendor %r rate-limited for %s; trying next vendor.", vendor, method)
-            continue
+            last_rate_limit = e  # Throttled, not absent — remember it so an all-throttled
+            continue             # chain reports "rate-limited" instead of "no vendor".
         except VendorNotConfiguredError as e:
             logger.warning("Vendor %r not configured for %s; trying next vendor.", vendor, method)
             if first_error is None:
@@ -258,5 +260,13 @@ def route_to_vendor(method: str, *args, **kwargs):
                 f"({first_error}). Proceed without it; do not fabricate values."
             )
         raise first_error
+
+    # Every vendor in the chain was throttled (no data gap, no other error). The
+    # vendors ARE available and configured — surface the actionable rate-limit
+    # cause so the operator/agent backs off or adds a key, instead of the
+    # misleading "no vendor" verdict that hides why the call failed (#993).
+    if last_rate_limit is not None:
+        logger.warning("All vendors rate-limited for %s: %s", method, last_rate_limit)
+        raise last_rate_limit
 
     raise RuntimeError(f"No available vendor for '{method}'")

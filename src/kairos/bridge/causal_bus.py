@@ -23,6 +23,7 @@ through this bus, look-ahead bias is impossible by construction, not by review.
 from __future__ import annotations
 
 import bisect
+import math
 import re
 from datetime import date, datetime, timezone
 
@@ -61,6 +62,29 @@ class ClockDomainError(LookAheadError):
 _EPOCH_THRESHOLD = 1e7
 
 
+def _require_finite(value: float, original: object) -> float:
+    """Reject a non-finite (NaN / ±inf) cutoff value.
+
+    A NaN cutoff is uniquely dangerous on a ``bisect``-backed bus: every
+    ``x < nan`` comparison is ``False``, so ``bisect_right`` lands at the end of
+    the array and ``as_of`` returns the **newest** percept — maximal look-ahead,
+    with the strict ``p.ts > cutoff`` guard also bypassed (``x > nan`` is
+    ``False``). ``+inf`` returns the newest percept too; ``-inf`` silently
+    empties every window. None of these is a legitimate point-in-time query, so
+    we fail closed. Raises :class:`LookAheadError` (an ``AssertionError``, *not*
+    a ``ValueError``) deliberately: the numeric-string branch of
+    :func:`resolve_cutoff` swallows ``ValueError`` to fall through to date
+    parsing, and a non-finite value must never be re-interpreted as a date.
+    """
+    if not math.isfinite(value):
+        raise LookAheadError(
+            f"non-finite cutoff {original!r} (resolved to {value}) is not a valid "
+            "point-in-time query: it would bypass the causal boundary and surface "
+            "the newest percept (look-ahead)."
+        )
+    return value
+
+
 def resolve_cutoff(query: float | int | str | date | datetime) -> tuple[float, str]:
     """Resolve a query time to ``(value, domain)``.
 
@@ -79,7 +103,7 @@ def resolve_cutoff(query: float | int | str | date | datetime) -> tuple[float, s
     if isinstance(query, bool):  # guard: bool is an int subclass
         raise TypeError("query time cannot be a bool")
     if isinstance(query, (int, float)):
-        return float(query), "numeric"
+        return _require_finite(float(query), query), "numeric"
     if isinstance(query, datetime):
         dt = query if query.tzinfo else query.replace(tzinfo=timezone.utc)
         return dt.timestamp(), "epoch"
@@ -89,7 +113,7 @@ def resolve_cutoff(query: float | int | str | date | datetime) -> tuple[float, s
     if isinstance(query, str):
         s = query.strip()
         try:                       # a stringified number is a numeric-clock value
-            return float(s), "numeric"
+            return _require_finite(float(s), query), "numeric"
         except ValueError:
             pass
         if _DATE_ONLY.match(s):    # "YYYY-MM-DD" -> close of that day, UTC
@@ -145,6 +169,12 @@ class CausalPerceptionBus:
         """Append a percept. Timestamps must be non-decreasing — a real feed
         never delivers an older book after a newer one."""
         ts = float(percept.ts)
+        if not math.isfinite(ts):
+            raise ValueError(
+                f"non-finite percept ts={ts}. A NaN/inf timestamp poisons the bus: "
+                "it defeats the out-of-order guard and the clock inference, and every "
+                "subsequent causal query would silently mis-order."
+            )
         if self._ts and ts < self._ts[-1]:
             raise ValueError(
                 f"out-of-order percept: ts={ts} precedes last recorded ts={self._ts[-1]}. "
@@ -186,7 +216,25 @@ class CausalPerceptionBus:
 
     def aggregate_before(self, query, horizon: float) -> dict | None:
         """Summarise percepts in ``(cutoff - horizon, cutoff]`` — a causal
-        rolling read of the recent regime distribution and mean flow."""
+        rolling read of the recent regime distribution and mean flow.
+
+        The ``horizon`` is validated at the bus, so the guarantee holds for every
+        caller (not just the tool layer). A non-finite horizon can't scope a
+        window — ``+inf`` widens ``(cutoff - horizon, cutoff]`` to the whole
+        causal history and ``NaN`` makes ``cutoff - horizon`` NaN so ``bisect``
+        lands past the end and empties it — so we reject it (a ``ValueError`` the
+        tool layer already catches, mirroring :meth:`record`'s non-finite guard).
+        A non-positive horizon describes an empty look-back, so we fail closed to
+        ``None`` ("perception unavailable") rather than return a degenerate read.
+        """
+        if not math.isfinite(horizon):
+            raise ValueError(
+                f"non-finite horizon {horizon}. A NaN/inf look-back cannot scope a "
+                "causal window: it would silently return the whole history (+inf) or "
+                "an empty one (NaN) instead of the intended recent regime read."
+            )
+        if horizon <= 0:
+            return None
         cutoff = self._cutoff(query)
         hi = bisect.bisect_right(self._ts, cutoff)
         lo = bisect.bisect_right(self._ts, cutoff - horizon)

@@ -51,7 +51,7 @@ src/kairos/
 │   │   ├── conditional_logic.py   #   ConditionalLogic — should_continue_* routers
 │   │   ├── trading_graph.py       #   TradingAgentsGraph — tool nodes + propagate(perception_bus=)
 │   │   ├── propagation.py · checkpointer.py · reflection.py · signal_processing.py
-│   ├── dataflows/ · llm_clients.py · default_config.py · reporting.py
+│   ├── dataflows/ · llm_clients/ · default_config.py · reporting.py
 │
 ├── reasoning_cli/         # System-2 interactive CLI + static assets
 └── loop/
@@ -61,9 +61,10 @@ src/kairos/
 Each layer keeps its own soul, and the Constitution (`scripts/soul_check.py`)
 is **scoped** accordingly:
 
-- **System 1 + bridge** — subject to Rules 1/2/4: no `memcpy` on the LOB hot
+- **System 1 + bridge** — subject to Rules 1/2/3/4: no `memcpy` on the LOB hot
   path, no classic price-lagged TA vocabulary (`rsi`, `macd`, `ema`, ...), no
-  supervised regime/direction label as a training target.
+  REST/HTTP in the execution path (WebSocket/FIX only), no supervised
+  regime/direction label as a training target.
 - **System 2** — intentionally *exempt* from the no-classic-TA rule; the LLM
   agents *may* reason about RSI/MACD as fallible evidence.
 - **Rule 5 (Causality)** — NEW to Kairos. The reasoning-facing bridge files
@@ -324,8 +325,8 @@ if perception_bus is not None:
 
 so the analyst's tools read System-1 percepts strictly point-in-time as of
 `trade_date`. `TradingAgentsGraph.__init__` accepts `selected_analysts` (the
-`cognitive_loop._llm_decision` path passes
-`("microstructure", "market", "news", "fundamentals")`), and `GraphSetup` +
+`cognitive_loop._llm_decision` path defaults to `("microstructure",)` — the
+bus-backed analyst only), and `GraphSetup` +
 `ConditionalLogic` are constructed from `self.config` and handed to
 `setup_graph(selected_analysts)`.
 

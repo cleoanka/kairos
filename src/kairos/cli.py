@@ -3,7 +3,7 @@
     kairos version
     kairos loop      [--scenario toxic|calm|range] [--mode deterministic|llm] [--steps N]
     kairos perceive  <perception subcommand ...>   # System-1 (LOB-Core): gen/train/cluster/backtest/web/...
-    kairos reason    <TICKER> <YYYY-MM-DD>          # System-2 (TradingAgents) — needs [reasoning]
+    kairos reason    <TICKER> <YYYY-MM-DD> [--json]  # System-2 (TradingAgents) — needs [reasoning]
     kairos web       [--live] [--port N]            # live regime dashboard
     kairos soul-check                               # the unified Constitution enforcer
     kairos reproduce                                # end-to-end reproducibility gate
@@ -33,11 +33,31 @@ _BANNER = r"""
 def _cmd_loop(args) -> int:
     from kairos.loop import LoopConfig, run_cognitive_loop
 
+    if not 0.0 < args.decision_fraction < 1.0:  # a fraction of the session, exclusive of both ends
+        print(f"--decision-fraction must be in (0, 1), got {args.decision_fraction}.\n"
+              "  It is the point through the session where the stance is set.",
+              file=sys.stderr)
+        return 2
     cfg = LoopConfig(symbol=args.symbol, scenario=args.scenario, n_steps=args.steps,
                      seed=args.seed, mode=args.mode, decision_fraction=args.decision_fraction)
     if args.learned:
-        cfg.regime_backend = _load_learned_backend()
-    result = run_cognitive_loop(cfg)
+        try:
+            cfg.regime_backend = _load_learned_backend()
+        except FileNotFoundError as exc:  # encoder artifacts are gitignored (Apple-Silicon + MLX only)
+            print(f"--learned needs the trained System-1 encoder, but an artifact is missing: {exc}\n"
+                  "  Produce it with `kairos perceive --mode synthetic` (gen→train→cluster).\n"
+                  "  Training needs Apple Silicon + MLX: `pip install 'kairos[mlx]'`.\n"
+                  "  Or drop --learned to run the loop on the deterministic backend.",
+                  file=sys.stderr)
+            return 2
+    try:
+        result = run_cognitive_loop(cfg)
+    except ValueError as exc:  # e.g. --steps too small to leave a forward window past perception_window
+        print(f"the loop has no forward window to execute over: {exc}\n"
+              f"  Raise --steps (needs more than perception_window={cfg.perception_window} rows past the "
+              "decision point), or lower --decision-fraction.",
+              file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps(result.to_dict(), indent=2, default=str))
     else:
@@ -60,6 +80,44 @@ def _delegate_perceive(rest: list[str]) -> int:
     return int(perception_main(rest) or 0)
 
 
+def _valid_date(value: str) -> str:
+    """argparse ``type=`` for the reason date: YYYY-MM-DD, not in the future.
+
+    Mirrors the interactive path (reasoning_cli) so a bad date fails fast with a
+    clean CLI error (exit 2) before any LLM/API-key setup, rather than surfacing
+    an unrelated 'API key not set' error deep in propagation.
+    """
+    from datetime import date, datetime
+
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid date {value!r}: use YYYY-MM-DD") from None
+    if parsed > date.today():
+        raise argparse.ArgumentTypeError(f"date {value!r} is in the future")
+    return value
+
+
+def _valid_ticker(value: str) -> str:
+    """argparse ``type=`` for the reason ticker: validate charset, then normalize.
+
+    Mirrors the interactive path (get_ticker): reject anything outside the Yahoo
+    symbol charset up front (exit 2, not a deep traceback), then resolve to the
+    canonical symbol the data path will price. Charset validation also closes a
+    stored-injection vector — an unvalidated ticker containing ``|``/``]``/newline
+    reaches the memory-log tag line and can forge fabricated "resolved" entries.
+    """
+    from kairos.reasoning_cli.utils import is_valid_ticker_input, normalize_ticker_symbol
+
+    if not value.strip():
+        raise argparse.ArgumentTypeError("ticker must not be empty")
+    if not is_valid_ticker_input(value):
+        raise argparse.ArgumentTypeError(
+            f"invalid ticker {value!r}: use a Yahoo symbol, e.g. AAPL, 0700.HK, BTC-USD"
+        )
+    return normalize_ticker_symbol(value)
+
+
 def _cmd_reason(args) -> int:
     try:
         from kairos.reasoning.default_config import DEFAULT_CONFIG
@@ -68,9 +126,18 @@ def _cmd_reason(args) -> int:
         print(f"System-2 reasoning needs the [reasoning] extra: {exc}\n"
               "  pip install 'kairos[reasoning]'", file=sys.stderr)
         return 2
+    asset_type = args.asset_type
+    if asset_type is None:  # auto-detect from the (normalized) ticker, like the interactive path
+        from kairos.reasoning_cli.utils import detect_asset_type
+
+        asset_type = detect_asset_type(args.ticker).value
     ta = TradingAgentsGraph(debug=args.debug, config=DEFAULT_CONFIG.copy())
-    _, decision = ta.propagate(args.ticker, args.date, asset_type=args.asset_type)
-    print(decision)
+    _, decision = ta.propagate(args.ticker, args.date, asset_type=asset_type)
+    if args.json:
+        print(json.dumps({"ticker": args.ticker, "date": args.date,
+                          "asset_type": asset_type, "decision": decision}, default=str))
+    else:
+        print(decision)
     return 0
 
 
@@ -85,20 +152,34 @@ def _cmd_web(args) -> int:
     return int(perception_main(argv) or 0)
 
 
-def _cmd_soul(args) -> int:
+def _run_source_script(name: str, command: str) -> int:
+    """Run a scripts/ audit tool, or explain that it needs a source checkout.
+
+    ``scripts/`` (and the src/tests/ trees these tools scan) is not shipped in
+    the installed wheel, so from a `pip install`ed kairos the script is absent;
+    detect that and print a clear message with exit 2 rather than letting
+    subprocess emit a raw file-not-found.
+    """
     import subprocess
     from pathlib import Path
 
-    script = Path(__file__).resolve().parents[2] / "scripts" / "soul_check.py"
+    script = Path(__file__).resolve().parents[2] / "scripts" / name
+    if not script.is_file():
+        print(f"`kairos {command}` is only available from a source checkout: {script} is missing.\n"
+              "  It audits the on-disk src/tests/scripts trees, which are not shipped in the "
+              "installed wheel.\n"
+              "  Clone the repo (github.com/cleoanka/kairos) and run it from there.",
+              file=sys.stderr)
+        return 2
     return subprocess.call([sys.executable, str(script)])
+
+
+def _cmd_soul(args) -> int:
+    return _run_source_script("soul_check.py", "soul-check")
 
 
 def _cmd_reproduce(args) -> int:
-    import subprocess
-    from pathlib import Path
-
-    script = Path(__file__).resolve().parents[2] / "scripts" / "reproduce.py"
-    return subprocess.call([sys.executable, str(script)])
+    return _run_source_script("reproduce.py", "reproduce")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -127,10 +208,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="System-1 (LOB-Core) subcommands (gen/train/cluster/backtest/...)")
 
     re = sub.add_parser("reason", help="System-2 (TradingAgents) decision for a ticker/date")
-    re.add_argument("ticker")
-    re.add_argument("date")
-    re.add_argument("--asset-type", default="stock", choices=["stock", "crypto"])
+    re.add_argument("ticker", type=_valid_ticker,
+                    help="Yahoo symbol, e.g. AAPL, 0700.HK, BTC-USD (validated and normalized)")
+    re.add_argument("date", type=_valid_date, help="analysis date YYYY-MM-DD (not in the future)")
+    re.add_argument("--asset-type", default=None, choices=["stock", "crypto"],
+                    help="override the asset type (auto-detected from the ticker by default)")
     re.add_argument("--debug", action="store_true")
+    re.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     re.set_defaults(func=_cmd_reason)
 
     wb = sub.add_parser("web", help="serve the live regime dashboard")

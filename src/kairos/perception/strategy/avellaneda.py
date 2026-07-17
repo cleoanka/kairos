@@ -24,11 +24,10 @@ from .maker import Quote
 
 
 class AvellanedaStoikovMaker:
-    def __init__(self, base_size: float = 1.0, tick: float = 1.0, gamma: float = 0.02,
+    def __init__(self, base_size: float = 1.0, gamma: float = 0.02,
                  k: float = 0.5, horizon: float = 1.0, vol_window: int = 50,
                  max_inventory: float = 20.0, default_sigma: float = 2.0):
         self.base_size = base_size
-        self.tick = tick
         self.gamma = gamma
         self.k = k
         self.horizon = horizon
@@ -48,12 +47,18 @@ class AvellanedaStoikovMaker:
                inventory: float) -> Quote:
         if not (math.isfinite(best_bid) and math.isfinite(best_ask)):
             return Quote(None, 0.0, None, 0.0)   # corrupt book — do not quote
+        if not (self.k > 0.0 and self.gamma > 0.0):
+            return Quote(None, 0.0, None, 0.0)   # degenerate spread params — stand aside
         mid = 0.5 * (best_bid + best_ask)
+        if not math.isfinite(mid):
+            return Quote(None, 0.0, None, 0.0)   # finite touch, overflowing mid — stand aside
         sigma = self._sigma(mid)
         if regime == Regime.TOXIC:
             return Quote(None, 0.0, None, 0.0)
 
         var = sigma * sigma * self.horizon
+        if not math.isfinite(var):
+            return Quote(None, 0.0, None, 0.0)   # volatility overflowed to inf — stand aside
         r = mid - inventory * self.gamma * var                       # reservation price
         half = 0.5 * self.gamma * var + (1.0 / self.gamma) * math.log(1.0 + self.gamma / self.k)
         # Stay competitive: clamp to at-or-improving the touch (a wider A-S spread

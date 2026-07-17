@@ -23,7 +23,8 @@ faithful causal shadow of live trading — never an inflated backtest.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 
 from kairos.bridge import (
     Decision,
@@ -122,10 +123,16 @@ def _llm_decision(bus, symbol: str, decision_time: str, config: dict | None,
 
 
 def _baselines(forward_df, link: ExecutionLink, regime_backend, cfg) -> dict:
-    """Score honest reference strategies over the same forward window."""
-    out = {}
+    """Score honest reference strategies over the same forward window.
+
+    ``stand_aside`` is the genuinely flat null strategy — it posts no quotes,
+    takes no fills and risks nothing, so it is a real reference for the edge a
+    strategy adds rather than a self-comparison. (A HOLD/0.0 decision still runs
+    the two-sided market maker through System-1, which is exactly what
+    ``pure_market_making`` measures — hence the two must not be conflated.)"""
+    out = {"stand_aside": {"final_pnl": 0.0, "fills": 0,
+                           "final_inventory": 0.0, "halted": False}}
     for name, dec in {
-        "stand_aside": Decision("HOLD", 0.0, source="baseline"),
         "naive_long": Decision("BUY", 1.0, source="baseline"),
         "pure_market_making": Decision("HOLD", 0.0, source="baseline"),
     }.items():
@@ -133,6 +140,47 @@ def _baselines(forward_df, link: ExecutionLink, regime_backend, cfg) -> dict:
         out[name] = {"final_pnl": rep["final_pnl"], "fills": rep["fills"],
                      "final_inventory": rep["final_inventory"], "halted": rep["halted"]}
     return out
+
+
+@contextmanager
+def _shared_perception():
+    """Memoize :func:`perceive_regimes` for the duration of one loop run.
+
+    ``ExecutionLink.execute`` re-derives the *perceived* regime array from
+    ``(forward_df, window, regime_backend, cfg)`` on every call, and one run
+    calls it three times over the SAME forward window (the real decision plus
+    the ``naive_long`` / ``pure_market_making`` baselines). Since
+    ``perceive_regimes`` is a pure function of exactly those args, the three
+    arrays are bit-identical — so under a learned backend the dominant per-row
+    inference cost is paid 3× for nothing. We wrap the module-level function
+    with a per-run identity cache (keyed on ``id``/``window``, which is sound
+    because all four inputs are the same live objects across the three calls)
+    and restore it afterwards, so behaviour and headline numbers are unchanged.
+    """
+    import kairos.bridge.execution_link as el
+
+    original = el.perceive_regimes
+    cache: dict = {}
+
+    def memoized(df, *, window=64, regime_backend=None, cfg=None):
+        key = (id(df), window, id(regime_backend), id(cfg))
+        out = cache.get(key)
+        if out is None:
+            out = original(df, window=window, regime_backend=regime_backend, cfg=cfg)
+            cache[key] = out
+        return out
+
+    el.perceive_regimes = memoized
+    try:
+        yield
+    finally:
+        # Restore unconditionally — even if the body raised — so a failed run
+        # never leaves the memoized wrapper installed for the next run. Guard
+        # the swap-back so we only unwind our OWN wrapper: if something nested
+        # installed a newer one we leave it in place (strict LIFO), never
+        # clobbering it with our stale `original`.
+        if el.perceive_regimes is memoized:
+            el.perceive_regimes = original
 
 
 def run_cognitive_loop(cfg: LoopConfig | None = None, *, df=None,
@@ -164,13 +212,20 @@ def run_cognitive_loop(cfg: LoopConfig | None = None, *, df=None,
         # stamped, else the numeric step (the causal bus rejects a cross-clock query).
         decision_time = percept.as_of if percept.as_of else str(decision_ts)
         decision = _llm_decision(bus, cfg.symbol, decision_time, reasoning_config)
+        # Honour max_conviction here too — the LLM's parsed conviction is a raw
+        # verdict, not a risk-capped one (deterministic_policy already clamps).
+        if decision.conviction > cfg.max_conviction:
+            decision = replace(decision, conviction=cfg.max_conviction)
     else:
         decision = deterministic_policy(percept, max_conviction=cfg.max_conviction)
 
     # 3) ACT — execute over the forward window (System-1 retains the TOXIC veto).
+    # The perceived-regime array is shared across the decision run and both
+    # baselines (all read the same forward window) so it is computed only once.
     link = ExecutionLink(window=cfg.perception_window)
-    execution = link.execute(decision, forward, regime_backend=cfg.regime_backend, cfg=cfg.micro)
-    baselines = _baselines(forward, link, cfg.regime_backend, cfg.micro)
+    with _shared_perception():
+        execution = link.execute(decision, forward, regime_backend=cfg.regime_backend, cfg=cfg.micro)
+        baselines = _baselines(forward, link, cfg.regime_backend, cfg.micro)
 
     # 4) REFLECT — an honest, quantitative post-mortem.
     reflection = _reflect(cfg, percept, decision, execution, baselines)

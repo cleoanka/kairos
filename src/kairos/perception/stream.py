@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import threading
 from collections import deque
@@ -23,6 +24,8 @@ from urllib.parse import parse_qs, urlparse
 import numpy as np
 
 from .schema import N_LEVELS, Regime, featurize_from_raw, snapshot_to_row, snapshot_to_vector
+
+logger = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 DEFAULT_URL = "wss://stream.bybit.com/v5/public/spot"
@@ -128,14 +131,18 @@ class _Stream:
             row[f"ask_px_{k}"] = float(row[f"ask_px_{k}"]) * tick
 
         X, _ = featurize_from_raw(snapshot_to_vector(snap).reshape(1, -1))
-        regime, z = 0, None
+        regime, z = int(Regime.RANGE), None
         if self.predictor is not None:
             try:
                 regime = int(self.predictor.predict_features(X)[0])
                 from .models.embedder import embed
                 z = np.asarray(embed(self.predictor.model, X, self.predictor.stats)[0])
-            except Exception:
-                regime, z = 0, None
+            except Exception as e:
+                # Fail SAFE: a broken inference must NOT silently pick RANGE (the
+                # least-cautious regime) and drop the maker's stand-aside veto.
+                # Mirror the bridge's non-finite → TOXIC rule (microstructure.py).
+                logger.warning("live regime inference failed, failing safe to TOXIC: %s", e)
+                regime, z = int(Regime.TOXIC), None
         mid = float(snap.mid)
 
         # Publish atomically w.r.t. the symbol: the maker step, rolling-buffer
@@ -311,11 +318,15 @@ class _Handler(BaseHTTPRequestHandler):
                 _active_streams -= 1
 
 
-def _load_predictor():
-    """Live data → prefer the real-Bybit-trained model; fall back to synthetic."""
+def _load_predictor(real: bool = True):
+    """Live data → prefer the real-Bybit-trained model; fall back to synthetic.
+
+    ``real=False`` forbids the real-model preference (mirrors the non-live
+    ``build_dashboard_data`` gating), so ``--live`` without ``--real`` runs the
+    synthetic-trained model even when a real one is present."""
     from .real import has_real_model, real_model_paths
     from .regime.predict import RegimePredictor
-    if has_real_model():
+    if real and has_real_model():
         try:
             return RegimePredictor.load(*real_model_paths()), "real-Bybit-trained", True
         except Exception:
@@ -331,8 +342,14 @@ def _load_predictor():
 def serve_live(port: int = 8000, symbol: str = "BTCUSDT", real: bool = True,
                open_browser: bool = True) -> int:
     global STREAM
+    if not 1 <= port <= 65535:
+        # Validate up front — an out-of-range port raises OverflowError (not a
+        # subclass of OSError) inside bind, slipping past the handler below, and
+        # would otherwise leak the already-started daemon capture thread.
+        print(f"could not start server on port {port}: port must be 1-65535.")
+        return 1
     from .web.build import _load_metrics
-    predictor, src, is_real = _load_predictor()
+    predictor, src, is_real = _load_predictor(real)
     STREAM = _Stream(predictor, _load_metrics(is_real), src)
     STREAM.want = symbol if symbol in SYMBOLS else SYMBOLS[0]
     STREAM.symbol = STREAM.want

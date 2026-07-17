@@ -89,7 +89,9 @@ def _embed(model, X, stats):
 
 # --- Figure 1 : regime separation -------------------------------------------
 def fig_regime_separation():
+    from sklearn.cluster import KMeans
     from sklearn.decomposition import PCA
+    from sklearn.metrics import adjusted_rand_score
 
     model, stats = _load_encoder()
     df = generate(n_steps=6000, seed=13, scenario="toxic")  # unseen seed
@@ -98,6 +100,15 @@ def fig_regime_separation():
     z2 = PCA(n_components=2, random_state=0).fit_transform(np.asarray(z))
     reg = df["regime"].to_numpy()
 
+    # Compute the *out-of-sample* ARI on exactly the data being plotted, with the
+    # same KMeans clustering as kairos.perception.regime.evaluate, so the caption
+    # can never drift from the figure. The trained encoder + train-time stats are
+    # frozen; this seed (13) is unseen, so this is genuinely out-of-sample — and
+    # ~0.90, not the 0.99 in-sample/transductive number from report.json.
+    zs = (z - z.mean(0)) / (z.std(0) + 1e-6)
+    pred = KMeans(n_clusters=3, n_init=10, random_state=0).fit_predict(zs)
+    oos_ari = float(adjusted_rand_score(reg, pred))
+
     fig, ax = plt.subplots(figsize=(9, 6.2), dpi=170)
     for r in (Regime.RANGE, Regime.TREND, Regime.TOXIC):
         m = reg == int(r)
@@ -105,7 +116,9 @@ def fig_regime_separation():
                    label=r.name, edgecolors="none", rasterized=True)
     _style(ax)
     ax.set_title("System-1 separates market regimes with no labels", pad=14)
-    ax.text(0.0, 1.02, "self-supervised LOB embedding (VICReg) → PCA-2D, colored by ground-truth regime  ·  out-of-sample ARI ≈ 0.99",
+    ax.text(0.0, 1.02,
+            "self-supervised LOB embedding (VICReg) → PCA-2D, colored by ground-truth "
+            f"regime  ·  out-of-sample ARI ≈ {oos_ari:.2f} (unseen seed)",
             transform=ax.transAxes, fontsize=9.5, color=MUTED)
     ax.set_xlabel("PC-1")
     ax.set_ylabel("PC-2")

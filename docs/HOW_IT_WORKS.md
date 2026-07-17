@@ -105,14 +105,14 @@ Kairos cognitive loop — BTCUSDT (scenario=toxic, mode=deterministic)
   System-2 stance  : BUY @ conviction 0.67 (source=deterministic-policy)
   Execution        : PnL +464.5, 207 fills, inv +7.59, halted=False
   System-1 veto    : 28% of the window perceived TOXIC (dominated=False)
-  Edge vs stand-aside: +1547.7
-  Baselines        : stand_aside=-1083, naive_long=+1032, pure_market_making=-1083
+  Edge vs stand-aside: +464.5
+  Baselines        : stand_aside=+0, naive_long=+1032, pure_market_making=-1083
 ```
 
-> **Read this honestly.** On this *trending* toxic scenario the loop beats
-> standing aside (+1547) but **not** naive-always-long (+1032): the market
-> trends up, so pure directional exposure wins, and a market maker pays adverse
-> selection. That is a property of a trending market, not a bug. Kairos's
+> **Read this honestly.** On this *trending* toxic scenario the loop earns
+> +464.5, so it beats standing flat aside (its edge over doing nothing is
+> +464.5) but **not** naive-always-long (+1032): the market trends up, so pure
+> directional exposure wins, and a market maker pays adverse selection. That is a property of a trending market, not a bug. Kairos's
 > measured edge is on **benign (range) markets** — run `--scenario range` and
 > the loop captures spread (~+850) while naive-long earns almost nothing (~+80),
 > across every seed. The value here is *regime-adaptivity and causal safety*, not
@@ -289,12 +289,13 @@ kairos loop --scenario toxic --mode deterministic
 ```
 
 **LLM** — the real debate. Internally (`_llm_decision`) the loop builds a
-`TradingAgentsGraph` with the Microstructure Analyst included and **attaches the
-causal bus** so every microstructure tool reads point-in-time:
+`TradingAgentsGraph` with **only** the bus-backed Microstructure Analyst (so the
+demo needs an LLM key but no external market-data keys) and **attaches the causal
+bus** so every microstructure tool reads point-in-time:
 
 ```python
 ta = TradingAgentsGraph(
-    selected_analysts=("microstructure", "market", "news", "fundamentals"),
+    selected_analysts=("microstructure",),  # the loop default; add market/news/… for the full firm
     config=cfg,
 )
 final_state, decision_text = ta.propagate(
@@ -305,8 +306,9 @@ decision = parse_decision(str(decision_text))   # → Decision(action, convictio
 
 `parse_decision` extracts the stance from the free-text verdict — it prefers the
 explicit `FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**` marker the pipeline
-emits, falls back to the last bare BUY/HOLD/SELL token, and reads conviction
-from an optional `x/5`, `x/10`, or `x%` rating.
+emits, falls back to the last bare BUY/HOLD/SELL token, then to a 5-tier tilt
+word (`Overweight` → BUY, `Underweight` → SELL, at a reduced conviction), and
+reads conviction from an optional `x/5`, `x/10`, `x/100`, or `x%` rating.
 
 Run it (needs `[reasoning]` and a configured provider key):
 

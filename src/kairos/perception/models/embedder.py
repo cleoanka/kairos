@@ -21,6 +21,11 @@ matrix X. Evaluation against ground-truth regimes happens in
 from __future__ import annotations
 
 import argparse
+import contextlib
+import json
+import os
+import struct
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -225,6 +230,38 @@ def load_trained(weights: str = "artifacts/lob_encoder.safetensors",
     return model, stats
 
 
+def save_weights_with_run_id(model, path: str, run_id: str) -> None:
+    """Write the encoder ``.safetensors`` with a ``run_id`` stamped in its metadata.
+
+    ``nn.Module.save_weights`` cannot carry metadata, so we flatten the params and
+    call ``mx.save_safetensors`` directly. The stamp is the encoder's half of the
+    three-file coherence check (:func:`regime.predict._reject_mixed_provenance`):
+    latents/regime already carry it, and stamping the weights lets a load reject a
+    mixed set even when the crash committed the *new* encoder first (real.py swaps
+    weights before latents). Only ever called on the MLX training path.
+    """
+    from mlx.utils import tree_flatten
+
+    flat = tree_flatten(model.parameters(), destination={})
+    mx.save_safetensors(path, flat, metadata={"run_id": run_id})
+
+
+def read_weights_run_id(weights: str) -> str | None:
+    """Return the ``run_id`` stamped in a ``.safetensors`` header, or ``None``.
+
+    Dependency-free (the provenance guard runs on non-MLX hosts too): the format
+    is an 8-byte little-endian header length, then a JSON header whose optional
+    ``__metadata__`` map holds the stamp. Older weights without it read as
+    ``None`` (backward-compatible — nothing to compare).
+    """
+    with open(weights, "rb") as fh:
+        (header_len,) = struct.unpack("<Q", fh.read(8))
+        header = json.loads(fh.read(header_len).decode("utf-8"))
+    meta = header.get("__metadata__") or {}
+    rid = meta.get("run_id")
+    return str(rid) if rid is not None else None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Train the self-supervised LOB embedder (MLX)")
     ap.add_argument("--data", type=Path, default=Path("data/synthetic.parquet"))
@@ -241,13 +278,38 @@ def main(argv: list[str] | None = None) -> int:
     z = embed(model, X, stats)
 
     args.latents.parent.mkdir(parents=True, exist_ok=True)
-    # Carry ts/mid (NOT regime) so the embedder stays strictly label-free.
-    np.savez(
-        args.latents, z=z.astype(np.float32),
-        ts=df["ts"].to_numpy(np.float32), mid=df["mid"].to_numpy(np.float32),
-        mu=stats["mu"], sd=stats["sd"], final_loss=np.float32(history[-1]),
-    )
-    model.save_weights(str(args.weights))
+    args.weights.parent.mkdir(parents=True, exist_ok=True)
+    # Latents/stats and encoder weights are ONE coherent model; a crash between
+    # the two in-place writes would leave mismatched files that load silently.
+    # Stage each to a unique pid+uuid temp and os.replace them into place only
+    # after BOTH are written, so a crash never overwrites a good file with a
+    # partial one; a shared run_id lets a later load reject a mixed set. Temps
+    # are cleaned on any BaseException. See stockstats_utils.py for the pattern.
+    run_id = uuid.uuid4().hex
+    stem = f"{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    # save_weights / np.savez validate the extension, so put the unique stem
+    # *before* the real suffix so each temp still ends in .npz / .safetensors.
+    l_tmp = f"{args.latents}.{stem}.npz"
+    w_tmp = f"{args.weights}.{stem}.safetensors"
+    try:
+        # Carry ts/mid (NOT regime) so the embedder stays strictly label-free.
+        # ts is float64: float32 has a 128s ULP near a modern UNIX epoch, which
+        # would quantise sub-2-minute snapshots to an identical timestamp.
+        np.savez(
+            l_tmp, z=z.astype(np.float32),
+            ts=df["ts"].to_numpy(np.float64), mid=df["mid"].to_numpy(np.float64),
+            mu=stats["mu"], sd=stats["sd"], final_loss=np.float32(history[-1]),
+            run_id=run_id,
+        )
+        save_weights_with_run_id(model, w_tmp, run_id)
+        # Only now that both temps are fully written do we swap them into place.
+        os.replace(l_tmp, args.latents)
+        os.replace(w_tmp, args.weights)
+    except BaseException:
+        for tmp in (l_tmp, w_tmp):
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+        raise
     print(f"saved latents {z.shape} -> {args.latents}; weights -> {args.weights}")
     print(f"final masked-recon loss: {history[-1]:.5f}")
     return 0

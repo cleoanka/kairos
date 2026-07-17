@@ -5,6 +5,8 @@ The important one: the incremental ``_LiveMaker`` used on the live path must be 
 """
 from __future__ import annotations
 
+import pytest
+
 from kairos.perception.execution.risk import RiskGate
 from kairos.perception.execution.simulator import run_backtest
 from kairos.perception.strategy.avellaneda import AvellanedaStoikovMaker
@@ -44,3 +46,100 @@ def test_load_predictor_degrades_gracefully():
     from kairos.perception.stream import _load_predictor
     pred, src, is_real = _load_predictor()
     assert isinstance(src, str) and isinstance(is_real, bool)
+
+
+def test_load_predictor_honours_real_flag(monkeypatch):
+    # `--live` without `--real` must NOT pick the real-Bybit model even when a
+    # loadable one exists: the flag serve_live threads in is honoured, not
+    # ignored. Stub a *loadable* real model so only the flag decides the branch.
+    import kairos.perception.stream as stream
+
+    monkeypatch.setattr("kairos.perception.real.has_real_model", lambda: True)
+    monkeypatch.setattr(
+        "kairos.perception.regime.predict.RegimePredictor.load",
+        classmethod(lambda cls, *a, **k: object()),
+    )
+
+    # real=True reaches the real branch (proves the stub is loadable) …
+    _, src_real, is_real = stream._load_predictor(real=True)
+    assert is_real is True
+    assert src_real == "real-Bybit-trained"
+
+    # … real=False skips it despite the loadable real model being present.
+    _, src_syn, is_syn = stream._load_predictor(real=False)
+    assert is_syn is False
+    assert src_syn != "real-Bybit-trained"
+
+
+def test_inference_failure_fails_safe_to_toxic():
+    # A broken live inference must NOT silently pick RANGE (regime 0, the least
+    # cautious): it must fail SAFE to TOXIC — mirroring the bridge's non-finite
+    # rule — so the maker keeps its stand-aside veto on an unreadable book.
+    from kairos.perception.ingest.orderbook import LiveOrderBook
+    from kairos.perception.schema import Regime
+    from kairos.perception.stream import _Stream
+
+    class _BrokenPredictor:
+        model = None
+        stats = None
+
+        def predict_features(self, X):
+            raise RuntimeError("model exploded")
+
+    book = LiveOrderBook(tick_size=0.1)
+    book.apply_depth([(100.0 - i * 0.1, 2.0 + i) for i in range(10)],
+                     [(100.1 + i * 0.1, 2.0 + i) for i in range(10)], is_snapshot=True)
+    assert book.ready()
+
+    s = _Stream(predictor=_BrokenPredictor(), metrics={}, model_src="test")
+    s._process(book.snapshot(), s.want)
+
+    assert s.latest is not None
+    assert s.latest["rp"] == int(Regime.TOXIC)   # not RANGE (0)
+
+
+@pytest.mark.parametrize("port", [99999, 70000, 0, -1])
+def test_serve_live_rejects_out_of_range_port_cleanly(port, monkeypatch, capsys):
+    """An out-of-range --port must yield the same clean message + non-zero exit as
+    the non-live serve(), not an uncaught OverflowError — and must reject up front,
+    before the STREAM singleton / daemon capture thread are ever created."""
+    import kairos.perception.stream as stream
+
+    def _boom(*a, **k):
+        raise AssertionError("STREAM was created before the port was validated")
+    monkeypatch.setattr(stream, "_load_predictor", _boom)
+
+    rc = stream.serve_live(port=port, open_browser=False)
+    assert rc == 1
+    assert "could not start server" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("port", [1, 8000, 65535])
+def test_serve_live_accepts_in_range_port(port, monkeypatch):
+    """The guard must not reject valid ports: an in-range port passes validation
+    and proceeds past it (bind stubbed so no socket is opened, thread never runs)."""
+    import kairos.perception.stream as stream
+
+    monkeypatch.setattr(stream, "_load_predictor",
+                        lambda real=True: (None, "test", False))
+    monkeypatch.setattr("kairos.perception.web.build._load_metrics",
+                        lambda is_real: {})
+    monkeypatch.setattr(stream.threading, "Thread",
+                        lambda *a, **k: type("T", (), {"start": lambda self: None})())
+
+    class _FakeServer:
+        daemon_threads = False
+
+        def __init__(self, *a, **k):
+            pass
+
+        def serve_forever(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(stream, "ThreadingHTTPServer", _FakeServer)
+
+    rc = stream.serve_live(port=port, open_browser=False)
+    assert rc == 0

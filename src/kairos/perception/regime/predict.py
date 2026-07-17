@@ -15,8 +15,44 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..models.embedder import embed, load_trained
+from ..models.embedder import embed, load_trained, read_weights_run_id
 from ..schema import REGIME_NAMES, Regime, featurize, featurize_from_raw
+
+
+class MixedModelError(RuntimeError):
+    """The encoder/latents and the regime centroids are from different runs.
+
+    The three model files (encoder weights, latents+stats, centroids+map) share
+    one latent space and are only coherent when written by the *same* training
+    run. ``build_real_model`` stamps a shared ``run_id`` into all three artifacts
+    (the encoder's goes in the safetensors metadata); a crash mid-persist can
+    leave a new encoder or new latents beside old centroids, so we fail closed
+    here rather than silently load a mixed model that would drive a wrong
+    (safety-critical) regime read.
+    """
+
+
+def _reject_mixed_provenance(latents: str, regime_model, weights: str | None = None) -> None:
+    """Raise if the encoder/latents/regime-model carry disagreeing ``run_id``.
+
+    All three are stamped since kairos5-01 (the encoder's in its safetensors
+    metadata); older artifacts without a stamp read as ``None`` and are accepted
+    (backward-compatible — nothing to compare). Every stamped pair must agree, so
+    an encoder committed by a crashed re-train (real.py swaps weights first) is
+    rejected even though the two npz files still match each other.
+    """
+    lat = np.load(latents)
+    lat_id = str(lat["run_id"]) if "run_id" in lat.files else None
+    rm_id = str(regime_model["run_id"]) if "run_id" in regime_model.files else None
+    w_id = read_weights_run_id(weights) if weights is not None else None
+    ids = {"latents": lat_id, "regime_model": rm_id, "weights": w_id}
+    seen = {name: rid for name, rid in ids.items() if rid is not None}
+    if len(set(seen.values())) > 1:
+        raise MixedModelError(
+            "mixed-provenance regime model: "
+            + ", ".join(f"{name} run_id={rid!r}" for name, rid in seen.items())
+            + " (a re-train likely crashed mid-persist)."
+        )
 
 
 class RegimePredictor:
@@ -34,6 +70,7 @@ class RegimePredictor:
              regime_model: str = "artifacts/regime_model.npz") -> RegimePredictor:
         model, stats = load_trained(weights, latents)
         rm = np.load(regime_model)
+        _reject_mixed_provenance(latents, rm, weights)
         return cls(model, stats, rm["z_mean"], rm["z_std"],
                    rm["centroids"], rm["cluster_to_regime"])
 

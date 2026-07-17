@@ -19,6 +19,8 @@ import json
 import logging
 from urllib.request import Request, urlopen
 
+from .symbol_utils import is_yahoo_safe
+
 logger = logging.getLogger(__name__)
 
 _API = "https://api.stocktwits.com/api/2/streams/symbol/{ticker}.json"
@@ -33,7 +35,14 @@ def fetch_stocktwits_messages(ticker: str, limit: int = 30, timeout: float = 10.
     symbol has no messages, or the response shape is unexpected — the
     caller never has to special-case None or exceptions.
     """
-    url = _API.format(ticker=ticker.upper())
+    symbol = ticker.upper()
+    # The ticker is interpolated into the URL path, so reject anything that
+    # isn't a plain market symbol before it can inject path/query segments —
+    # the same character gate the validated market-data path uses.
+    if not is_yahoo_safe(symbol):
+        logger.warning("StockTwits fetch skipped for invalid ticker %r", ticker)
+        return f"<stocktwits unavailable: invalid ticker {ticker!r}>"
+    url = _API.format(ticker=symbol)
     req = Request(url, headers={"User-Agent": _UA, "Accept": "application/json"})
     try:
         with urlopen(req, timeout=timeout) as resp:
@@ -51,6 +60,11 @@ def fetch_stocktwits_messages(ticker: str, limit: int = 30, timeout: float = 10.
     lines = []
     bullish = bearish = unlabeled = 0
     for m in messages[:limit]:
+        # A non-dict element (e.g. a null/list slipped into the array) would
+        # blow up the .get() calls below — skip it to honor the documented
+        # graceful-degradation contract, matching reddit.py's dict filter.
+        if not isinstance(m, dict):
+            continue
         created = m.get("created_at", "")
         user = (m.get("user") or {}).get("username", "?")
         entities = m.get("entities") or {}

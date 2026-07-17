@@ -29,6 +29,15 @@ def test_parse_conviction_scales():
     assert abs(parse_decision("BUY, rating 8/10").conviction - 0.8) < 1e-9
 
 
+def test_parse_conviction_percent_scale_denominator():
+    # "/100" must not be shadowed by the "/10" alternative (regex is left-to-
+    # right, not longest-match): 85/100 -> 0.85, never 8.5 clipped to 1.0.
+    assert abs(parse_decision("BUY, conviction 85/100").conviction - 0.85) < 1e-9
+    assert abs(parse_decision("BUY, conviction 50/100").conviction - 0.5) < 1e-9
+    assert abs(parse_decision("BUY, conviction 90 out of 100").conviction - 0.9) < 1e-9
+    assert parse_decision("BUY, conviction 100/100").conviction == 1.0
+
+
 def test_parse_conviction_spaced_denominator():
     # "9 / 10" (spaces) must read 0.9, not fall through to 0.09.
     assert abs(parse_decision("BUY, confidence 9 / 10").conviction - 0.9) < 1e-9
@@ -45,6 +54,58 @@ def test_parse_ignores_implausible_rating_magnitude():
     # A price-like number after the keyword must not pin conviction.
     d = parse_decision("BUY, confidence 4200 shares", default_conviction=0.6)
     assert d.conviction == 0.6
+
+
+def test_parse_ignores_scientific_notation_magnitude():
+    # "confidence 1e9" captures only "1" (the "e9" exponent is not a
+    # denominator) — it must NOT read as a [0,1] probability of 1.0. Non-finite /
+    # scientific magnitudes fall back to default_conviction, never full bias.
+    assert parse_decision("BUY. confidence 1e9", default_conviction=0.6).conviction == 0.6
+    assert parse_decision("BUY, rating 1E5", default_conviction=0.6).conviction == 0.6
+    assert parse_decision("BUY. confidence 1e9").bias < 1.0
+
+
+def test_parse_ignores_non_numeric_numerator_fraction():
+    # "rating: nan/10" — the "nan/" garbage must not let the DENOMINATOR digits
+    # "10" latch as a bare 10/10 -> conviction 1.0; it falls back to the default.
+    assert parse_decision("BUY rating: nan/10", default_conviction=0.6).conviction == 0.6
+    assert parse_decision("BUY confidence inf/5", default_conviction=0.6).conviction == 0.6
+    # A real fraction of the same shape is unaffected.
+    assert abs(parse_decision("BUY, rating 8/10").conviction - 0.8) < 1e-9
+
+
+def test_parse_five_tier_rating_words_are_directional():
+    # The System-2 Portfolio Manager renders on a 5-tier scale; every tier must
+    # carry a non-zero directional bias EXCEPT the neutral Hold. Overweight and
+    # Underweight (the middle tilts) must NOT collapse to a stand-aside HOLD.
+    biases = {w: parse_decision(w).bias for w in
+              ("Buy", "Overweight", "Hold", "Underweight", "Sell")}
+    assert biases["Buy"] > 0
+    assert biases["Overweight"] > 0        # bullish tilt — reduced-conviction BUY
+    assert biases["Hold"] == 0.0
+    assert biases["Underweight"] < 0       # bearish tilt — reduced-conviction SELL
+    assert biases["Sell"] < 0
+    # A tilt is a REDUCED-conviction lean ("gradually increase/decrease"), never
+    # as strong as an outright Buy/Sell.
+    assert 0 < biases["Overweight"] < biases["Buy"]
+    assert biases["Sell"] < biases["Underweight"] < 0
+    assert parse_decision("Overweight").action == "BUY"
+    assert parse_decision("Underweight").action == "SELL"
+
+
+def test_parse_tilt_from_pm_rating_markdown():
+    # The real hand-off is the PM's "**Rating**: <tier>" markdown, not a bare word.
+    over = parse_decision("## Decision\n\nrationale...\n\n**Rating**: Overweight\n")
+    assert over.action == "BUY" and over.bias > 0
+    under = parse_decision("## Decision\n\nrationale...\n\n**Rating**: Underweight\n")
+    assert under.action == "SELL" and under.bias < 0
+
+
+def test_parse_explicit_action_and_rating_beat_tilt_word():
+    # An explicit BUY/SELL token outranks a co-occurring tilt word, and an
+    # explicit rating phrase still governs a tilt's conviction.
+    assert parse_decision("We recommend SELL despite an Overweight lean.").action == "SELL"
+    assert abs(parse_decision("Overweight, rating 8/10").conviction - 0.8) < 1e-9
 
 
 def test_parse_recommendation_scoped_action_beats_trailing_caveat():

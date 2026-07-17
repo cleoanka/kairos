@@ -6,7 +6,8 @@ from io import StringIO
 import pandas as pd
 import requests
 
-from .errors import VendorNotConfiguredError, VendorRateLimitError
+from ._redact import redact_secrets
+from .errors import NoMarketDataError, VendorNotConfiguredError, VendorRateLimitError
 
 API_BASE_URL = "https://www.alphavantage.co/query"
 
@@ -59,6 +60,16 @@ class AlphaVantageRateLimitError(VendorRateLimitError):
     """Raised when the Alpha Vantage API rate limit is exceeded."""
     pass
 
+class AlphaVantageRequestError(Exception):
+    """A network/HTTP failure talking to Alpha Vantage, with the API key redacted.
+
+    A raw ``requests`` exception echoes the full request URL — including
+    ``apikey=...`` — in its message. We re-raise this key-free type so the router
+    can still surface a broken primary vendor (#989) without leaking the secret
+    into logs or the agent-facing data channel.
+    """
+    pass
+
 def _make_api_request(function_name: str, params: dict) -> dict | str:
     """Helper function to make API requests and handle responses.
 
@@ -67,9 +78,10 @@ def _make_api_request(function_name: str, params: dict) -> dict | str:
     """
     # Create a copy of params to avoid modifying the original
     api_params = params.copy()
+    api_key = get_api_key()
     api_params.update({
         "function": function_name,
-        "apikey": get_api_key(),
+        "apikey": api_key,
         "source": "trading_agents",
     })
 
@@ -83,8 +95,16 @@ def _make_api_request(function_name: str, params: dict) -> dict | str:
         # Remove entitlement if it's None or empty
         api_params.pop("entitlement", None)
 
-    response = requests.get(API_BASE_URL, params=api_params, timeout=REQUEST_TIMEOUT)
-    response.raise_for_status()
+    try:
+        response = requests.get(API_BASE_URL, params=api_params, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        # The request URL carries apikey=...; a raw requests exception echoes the
+        # full URL (key included) in its message and in e.request.url. Redact and
+        # re-raise a key-free error before this can reach any log or the agent.
+        raise AlphaVantageRequestError(
+            redact_secrets(f"{type(e).__name__}: {e}", api_key)
+        ) from None
 
     response_text = response.text
 
@@ -113,39 +133,77 @@ def _make_api_request(function_name: str, params: dict) -> dict | str:
 
 
 
-def _filter_csv_by_date_range(csv_data: str, start_date: str, end_date: str) -> str:
-    """
-    Filter CSV data to include only rows within the specified date range.
+def _filter_csv_by_date_range(
+    csv_data: str, start_date: str, end_date: str, symbol: str = ""
+) -> str:
+    """Filter CSV rows to ``start_date <= date <= end_date``.
+
+    This is the *only* thing that trims future rows out of the Alpha Vantage
+    price series: :func:`get_stock` requests the full series up to *today* with
+    no server-side date bound, so a leak here is a leak of look-ahead into a
+    causal backtest. The old behaviour returned the **raw, unfiltered** response
+    on any parse failure — silently serving every row after ``end_date``. That
+    is forbidden: on failure we now **fail closed** (raise
+    :class:`NoMarketDataError`) so the router falls back to the next vendor, and
+    unparseable individual rows are dropped (a ``NaT`` date can never be proven
+    ``<= end_date``) rather than passed through.
 
     Args:
-        csv_data: CSV string from Alpha Vantage API
-        start_date: Start date in yyyy-mm-dd format
-        end_date: End date in yyyy-mm-dd format
+        csv_data: CSV string from Alpha Vantage.
+        start_date / end_date: inclusive bounds, yyyy-mm-dd.
+        symbol: for the fail-closed error message.
 
     Returns:
-        Filtered CSV string
+        The filtered CSV string.
+
+    Raises:
+        NoMarketDataError: the frame could not be parsed/filtered safely.
     """
     if not csv_data or csv_data.strip() == "":
         return csv_data
 
     try:
-        # Parse CSV data
         df = pd.read_csv(StringIO(csv_data))
+        if df.empty or len(df.columns) == 0:
+            return csv_data  # header-only / no rows: nothing to leak, nothing to filter
 
-        # Assume the first column is the date column (timestamp)
+        # Assume the first column is the date column (timestamp). Parse strictly
+        # as ISO-8601 (Alpha Vantage's format): deterministic, and it refuses to
+        # locale-guess an ambiguous "01/02/2024" the way dateutil would — an
+        # unrecognised value becomes NaT and is dropped, never mis-ordered.
         date_col = df.columns[0]
-        df[date_col] = pd.to_datetime(df[date_col])
+        parsed = pd.to_datetime(df[date_col], errors="coerce", format="ISO8601")
+        if int(parsed.isna().sum()) == len(df):
+            # EVERY date failed to parse -> the first column is not the date we
+            # assumed, so we cannot trust any row's ordering. Returning the frame
+            # unfiltered would leak post-end_date rows; fail closed instead.
+            raise NoMarketDataError(
+                symbol or "?",
+                detail=(
+                    f"Alpha Vantage response had no parseable dates in its first "
+                    f"column ({date_col!r}); refusing to serve it unfiltered."
+                ),
+            )
 
-        # Filter by date range
+        df = df.assign(**{date_col: parsed})
         start_dt = pd.to_datetime(start_date)
         end_dt = pd.to_datetime(end_date)
+        # NaT rows compare False against both bounds and are excluded — a row
+        # whose date won't parse can never be proven in-range (fail closed).
+        mask = (df[date_col] >= start_dt) & (df[date_col] <= end_dt)
+        return df[mask].to_csv(index=False)
 
-        filtered_df = df[(df[date_col] >= start_dt) & (df[date_col] <= end_dt)]
-
-        # Convert back to CSV string
-        return filtered_df.to_csv(index=False)
-
+    except NoMarketDataError:
+        raise
     except Exception as e:
-        # If filtering fails, return original data with a warning
-        print(f"Warning: Failed to filter CSV data by date range: {e}")
-        return csv_data
+        # A structural failure must NEVER fall back to the raw, unfiltered
+        # response (every row up to *today* -> look-ahead). Fail closed so the
+        # router moves to the next vendor. The pandas exception cannot carry an
+        # API key, so echoing its text is safe.
+        raise NoMarketDataError(
+            symbol or "?",
+            detail=(
+                f"Alpha Vantage date-range filter failed "
+                f"({type(e).__name__}: {e}); refusing to serve unfiltered data."
+            ),
+        ) from e

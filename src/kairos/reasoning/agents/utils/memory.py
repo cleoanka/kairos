@@ -9,11 +9,24 @@ from kairos.reasoning.agents.utils.rating import parse_rating
 class TradingMemoryLog:
     """Append-only markdown log of trading decisions and reflections."""
 
-    # HTML comment: cannot appear in LLM prose output, safe as a hard delimiter
+    # HTML comment used as a hard delimiter. LLM prose (or attacker-influenced
+    # fetched content that reaches final_trade_decision) *can* contain this
+    # token, so stored fields are sanitized in store_decision() before writing.
     _SEPARATOR = "\n\n<!-- ENTRY_END -->\n\n"
+    # Bare separator comment (without surrounding newlines) — the injectable token.
+    _SEPARATOR_TOKEN = "<!-- ENTRY_END -->"
+    # Header block that durably records (date, ticker) keys whose resolved entry
+    # was dropped by rotation. It keeps store_decision()'s idempotency guard from
+    # resurrecting a rotated-out terminal entry as a fresh pending duplicate.
+    # Not a tag line (starts with "<!--"), so it never parses as an entry.
+    _TOMBSTONE_HEADER = "<!-- ROTATED_KEYS -->"
+    _TOMBSTONE_LINE_RE = re.compile(r"^- (.+?) \| (.+)$", re.MULTILINE)
     # Precompiled patterns — avoids re-compilation on every load_entries() call
     _DECISION_RE = re.compile(r"DECISION:\n(.*?)(?=\nREFLECTION:|\Z)", re.DOTALL)
     _REFLECTION_RE = re.compile(r"REFLECTION:\n(.*?)$", re.DOTALL)
+    # A line that would parse as an entry tag: starts with '[', ends with ']'.
+    # Defused per-line so an injected body cannot forge a resolved entry.
+    _TAG_LINE_RE = re.compile(r"^(\s*)\[(.*)\]\s*$", re.MULTILINE)
 
     def __init__(self, config: dict = None):
         cfg = config or {}
@@ -33,15 +46,34 @@ class TradingMemoryLog:
         trade_date: str,
         final_trade_decision: str,
     ) -> None:
-        """Append pending entry at end of propagate(). No LLM call."""
+        """Append pending entry at end of propagate(). No LLM call.
+
+        ``ticker`` and ``final_trade_decision`` are sanitized before writing:
+        they may carry attacker-influenced fetched content, so the separator
+        token and forged ``[... ]`` tag lines are neutralized to prevent a
+        stored prompt-injection that fabricates a resolved past-outcome entry.
+        """
         if not self._log_path:
             return
-        # Idempotency guard: fast raw-text scan instead of full parse
+        ticker = self._sanitize_ticker(ticker)
+        final_trade_decision = self._sanitize_field(final_trade_decision)
+        # Idempotency guard: fast raw-text scan instead of full parse. Any
+        # existing real tag line for (trade_date, ticker) suppresses the append
+        # — pending OR resolved — so a re-run never resurrects a terminal
+        # resolved entry into a second pending (which would be double-counted).
+        # A defused injected line begins with "(", not "[", so it can't match.
+        # A rotation tombstone for the key also suppresses it, so a resolved
+        # entry rotated out of the body stays terminal. The tombstone key is
+        # read only from the real header block (not a forged body line, whose
+        # header token is neutralized by _sanitize_field before it is stored).
         if self._log_path.exists():
             raw = self._log_path.read_text(encoding="utf-8")
+            prefix = f"[{trade_date} | {ticker} |"
             for line in raw.splitlines():
-                if line.startswith(f"[{trade_date} | {ticker} |") and line.endswith("| pending]"):
+                if line.startswith(prefix) and line.rstrip().endswith("]"):
                     return
+            if (trade_date, ticker) in self._tombstone_keys(raw):
+                return
         rating = parse_rating(final_trade_decision)
         tag = f"[{trade_date} | {ticker} | {rating} | pending]"
         entry = f"{tag}\n\nDECISION:\n{final_trade_decision}{self._SEPARATOR}"
@@ -110,10 +142,15 @@ class TradingMemoryLog:
         Finds the first pending entry matching (trade_date, ticker), updates
         its tag with return figures, and appends a REFLECTION section.  Uses
         a temp-file + os.replace() so a crash mid-write never corrupts the log.
+
+        ``reflection`` is sanitized like the stored decision: it is an
+        attacker-influenceable LLM output, so an injected separator + forged
+        ``[... resolved ...]`` tag must not split into a fabricated entry.
         """
         if not self._log_path or not self._log_path.exists():
             return
 
+        reflection = self._sanitize_field(reflection)
         text = self._log_path.read_text(encoding="utf-8")
         blocks = text.split(self._SEPARATOR)
 
@@ -166,6 +203,10 @@ class TradingMemoryLog:
 
         Each element of updates must have keys: ticker, trade_date,
         raw_return, alpha_return, holding_days, reflection.
+
+        Each ``reflection`` is sanitized like the stored decision: it is an
+        attacker-influenceable LLM output, so an injected separator + forged
+        ``[... resolved ...]`` tag must not split into a fabricated entry.
         """
         if not self._log_path or not self._log_path.exists() or not updates:
             return
@@ -199,8 +240,9 @@ class TradingMemoryLog:
                         f" | {raw_pct} | {alpha_pct} | {upd['holding_days']}d]"
                     )
                     rest = "\n".join(lines[1:])
+                    reflection = self._sanitize_field(upd["reflection"])
                     new_blocks.append(
-                        f"{new_tag}\n\n{rest.lstrip()}\n\nREFLECTION:\n{upd['reflection']}"
+                        f"{new_tag}\n\n{rest.lstrip()}\n\nREFLECTION:\n{reflection}"
                     )
                     del update_map[(trade_date, ticker)]
                     matched = True
@@ -217,16 +259,47 @@ class TradingMemoryLog:
 
     # --- Helpers ---
 
+    def _sanitize_field(self, value: str) -> str:
+        """Neutralize entry-delimiter tokens and forged tag lines in decision text.
+
+        Stored decision text can carry attacker-influenced fetched content.
+        Removing the separator comment prevents load_entries() from splitting on
+        an injected token, and blunting a leading ``[`` on any ``[...]`` line
+        stops _parse_entry() from reading it as a second (forged "resolved")
+        entry.  Both edits are inert in normal decision prose.
+        """
+        # Break the separator comment so it can never split into a new entry.
+        value = value.replace(self._SEPARATOR_TOKEN, "<!- ENTRY_END ->")
+        # Break the tombstone header so a body line can never forge a rotation
+        # key that suppresses a legitimate future store_decision().
+        value = value.replace(self._TOMBSTONE_HEADER, "<!- ROTATED_KEYS ->")
+        # Defuse any line that would parse as an entry tag "[ ... ]".
+        return self._TAG_LINE_RE.sub(r"\1(\2)", value)
+
+    def _sanitize_ticker(self, ticker: str) -> str:
+        """Strip tag-structural characters from a ticker before it enters a tag.
+
+        A ticker is embedded verbatim into the ``[date | ticker | ...]`` tag
+        line, so ``[`` ``]`` ``|`` and newlines would let a crafted ticker forge
+        extra tag fields (a fake resolved outcome) or a second entry.  A real
+        ticker never contains these, so stripping them is inert in normal use.
+        """
+        return self._sanitize_field(ticker).translate({ord(c): None for c in "[]|\r\n"})
+
     def _apply_rotation(self, blocks: list[str]) -> list[str]:
         """Drop oldest resolved blocks when their count exceeds max_entries.
 
-        Pending blocks are always kept (they represent unprocessed work).
+        Pending blocks are always kept (they represent unprocessed work). A
+        dropped resolved block's (date, ticker) key is recorded in the tombstone
+        header so store_decision()'s idempotency guard cannot resurrect it as a
+        fresh pending duplicate once its body is gone.
         Returns ``blocks`` unchanged when rotation is disabled or under cap.
         """
         if not self._max_entries or self._max_entries <= 0:
             return blocks
 
-        # Tag each block with (kept, is_resolved) by parsing tag-line markers.
+        # Tag each block with is_resolved by parsing tag-line markers. The
+        # tombstone header (if present) is never resolved and never dropped.
         decisions = []
         for block in blocks:
             stripped = block.strip()
@@ -246,13 +319,69 @@ class TradingMemoryLog:
             return blocks
 
         to_drop = resolved_count - self._max_entries
+        dropped_keys: list[tuple[str, str]] = []
         kept: list[str] = []
         for block, is_resolved in decisions:
             if is_resolved and to_drop > 0:
                 to_drop -= 1
+                key = self._tag_key(block)
+                if key:
+                    dropped_keys.append(key)
                 continue
             kept.append(block)
-        return kept
+        return self._record_tombstones(kept, dropped_keys)
+
+    def _tombstone_keys(self, raw: str) -> set[tuple[str, str]]:
+        """Return the (date, ticker) keys recorded in the tombstone header.
+
+        Keys are read only from a real ``<!-- ROTATED_KEYS -->`` block, so a
+        forged ``- date | ticker`` line inside a decision body is ignored.
+        """
+        keys: set[tuple[str, str]] = set()
+        for block in raw.split(self._SEPARATOR):
+            if not block.strip().startswith(self._TOMBSTONE_HEADER):
+                continue
+            for date, ticker in self._TOMBSTONE_LINE_RE.findall(block):
+                keys.add((date.strip(), ticker.strip()))
+        return keys
+
+    def _tag_key(self, block: str) -> tuple[str, str] | None:
+        """Return the (date, ticker) key of a block's tag line, or None."""
+        tag_line = block.strip().splitlines()[0].strip()
+        if not (tag_line.startswith("[") and tag_line.endswith("]")):
+            return None
+        fields = [f.strip() for f in tag_line[1:-1].split("|")]
+        if len(fields) < 2:
+            return None
+        return fields[0], fields[1]
+
+    def _record_tombstones(
+        self, blocks: list[str], dropped_keys: list[tuple[str, str]]
+    ) -> list[str]:
+        """Merge ``dropped_keys`` into the tombstone header block.
+
+        Keys are deduplicated and the header carried as the first block, so a
+        resolved (date, ticker) rotated out of the body still suppresses a
+        re-append. Returns ``blocks`` unchanged when nothing was dropped.
+        """
+        if not dropped_keys:
+            return blocks
+
+        keys: list[tuple[str, str]] = []
+        body: list[str] = []
+        for block in blocks:
+            if block.strip().startswith(self._TOMBSTONE_HEADER):
+                for date, ticker in self._TOMBSTONE_LINE_RE.findall(block):
+                    keys.append((date.strip(), ticker.strip()))
+            else:
+                body.append(block)
+        for key in dropped_keys:
+            if key not in keys:
+                keys.append(key)
+
+        lines = "\n".join(f"- {date} | {ticker}" for date, ticker in keys)
+        header = f"{self._TOMBSTONE_HEADER}\n{lines}"
+        return [header, *body]
 
     def _parse_entry(self, raw: str) -> dict | None:
         lines = raw.strip().splitlines()

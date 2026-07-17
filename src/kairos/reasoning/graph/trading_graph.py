@@ -352,25 +352,29 @@ class TradingAgentsGraph:
         # Resolve any pending memory-log entries for this ticker before the pipeline runs.
         self._resolve_pending_entries(company_name)
 
-        # Recompile with a checkpointer if the user opted in.
-        if self.config.get("checkpoint_enabled"):
-            self._checkpointer_ctx = get_checkpointer(
-                self.config["data_cache_dir"], company_name
-            )
-            saver = self._checkpointer_ctx.__enter__()
-            self.graph = self.workflow.compile(checkpointer=saver)
-
-            step = checkpoint_step(
-                self.config["data_cache_dir"], company_name, str(trade_date)
-            )
-            if step is not None:
-                logger.info(
-                    "Resuming from step %d for %s on %s", step, company_name, trade_date
-                )
-            else:
-                logger.info("Starting fresh for %s on %s", company_name, trade_date)
-
+        # Recompile with a checkpointer if the user opted in. The saver's
+        # __enter__ (which opens the sqlite3 connection) and the compile/
+        # checkpoint_step calls that can raise afterwards run INSIDE the try
+        # so the finally always drives __exit__ and closes the connection.
+        self._checkpointer_ctx = None
         try:
+            if self.config.get("checkpoint_enabled"):
+                self._checkpointer_ctx = get_checkpointer(
+                    self.config["data_cache_dir"], company_name
+                )
+                saver = self._checkpointer_ctx.__enter__()
+                self.graph = self.workflow.compile(checkpointer=saver)
+
+                step = checkpoint_step(
+                    self.config["data_cache_dir"], company_name, str(trade_date)
+                )
+                if step is not None:
+                    logger.info(
+                        "Resuming from step %d for %s on %s", step, company_name, trade_date
+                    )
+                else:
+                    logger.info("Starting fresh for %s on %s", company_name, trade_date)
+
             return self._run_graph(company_name, trade_date, asset_type=asset_type)
         finally:
             if self._checkpointer_ctx is not None:
@@ -378,11 +382,14 @@ class TradingAgentsGraph:
                 self._checkpointer_ctx = None
                 self.graph = self.workflow.compile()
             # Clear the run's causal bus so a later run for the same symbol never
-            # silently reuses a stale (process-global) perception history.
+            # silently reuses a stale (process-global) perception history. Pass the
+            # exact bus this run registered so the registry's identity guard is
+            # actually armed: a late finally then only pops OUR bus and can never
+            # evict a concurrent same-symbol run's live bus (and blind its analyst).
             if perception_bus is not None:
                 from kairos.bridge.microstructure_tools import clear_perception_bus
 
-                clear_perception_bus(symbol=company_name)
+                clear_perception_bus(symbol=company_name, bus=perception_bus)
 
     def save_reports(self, final_state, ticker, save_path=None) -> Path:
         """Write the markdown report tree for a completed run, like the CLI does.
