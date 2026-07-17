@@ -163,6 +163,12 @@ def write_bundle(out_dir: Path, n: int = 500, seed: int = 4, real: bool = False)
 
 def serve(port: int = 8000, n: int = 500, seed: int = 4, open_browser: bool = True,
           real: bool = False) -> int:
+    if not 1 <= port <= 65535:
+        # Validate up front — an out-of-range port raises OverflowError (not a
+        # subclass of OSError) inside bind, slipping past the handler below, and
+        # would otherwise waste the full build before crashing.
+        print(f"could not start server on port {port}: port must be 1-65535.")
+        return 1
     out = Path("artifacts/web")
     print(f"building dashboard data ({'real Bybit' if real else 'synthetic'}, {n} snapshots)…")
     write_bundle(out, n=n, seed=seed, real=real)

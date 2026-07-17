@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from kairos.perception.schema import N_LEVELS
 from kairos.perception.synthetic.generate import generate
+from kairos.perception.web import build as web_build
 from kairos.perception.web.build import WEB_DIR, build_dashboard_data, write_bundle
 
 
@@ -48,6 +51,41 @@ def test_write_bundle_creates_servable_files(tmp_path):
     assert (out / "index.html").exists()
     data = json.loads((out / "dashboard_data.json").read_text())
     assert len(data["snapshots"]) == 40
+
+
+@pytest.mark.parametrize("port", [99999, 70000, 0, -1])
+def test_serve_rejects_out_of_range_port_cleanly(port, monkeypatch, capsys):
+    """An out-of-range port must yield the same clean message + non-zero exit as
+    a port-in-use, not an uncaught OverflowError — and must not waste the build."""
+    def _boom(*a, **k):
+        raise AssertionError("write_bundle ran before the port was validated")
+    monkeypatch.setattr(web_build, "write_bundle", _boom)
+    rc = web_build.serve(port=port, open_browser=False)
+    assert rc == 1
+    assert "could not start server" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("port", [1, 8000, 65535])
+def test_serve_accepts_in_range_port(port, monkeypatch):
+    """The guard must not reject valid ports: an in-range port passes validation
+    and proceeds to build + bind (bind stubbed so no socket is opened)."""
+    monkeypatch.setattr(web_build, "write_bundle", lambda *a, **k: None)
+
+    class _FakeServer:
+        def __init__(self, *a, **k):
+            pass  # a successful "bind"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def serve_forever(self):
+            raise KeyboardInterrupt  # stop the loop cleanly → return 0
+
+    monkeypatch.setattr(web_build.socketserver, "TCPServer", _FakeServer)
+    assert web_build.serve(port=port, open_browser=False) == 0
 
 
 def test_snapshots_bit_identical_to_per_row_reference():
