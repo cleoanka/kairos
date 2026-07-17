@@ -325,8 +325,8 @@ if perception_bus is not None:
 
 so the analyst's tools read System-1 percepts strictly point-in-time as of
 `trade_date`. `TradingAgentsGraph.__init__` accepts `selected_analysts` (the
-`cognitive_loop._llm_decision` path passes
-`("microstructure", "market", "news", "fundamentals")`), and `GraphSetup` +
+`cognitive_loop._llm_decision` path defaults to `("microstructure",)` — the
+bus-backed analyst only), and `GraphSetup` +
 `ConditionalLogic` are constructed from `self.config` and handed to
 `setup_graph(selected_analysts)`.
 

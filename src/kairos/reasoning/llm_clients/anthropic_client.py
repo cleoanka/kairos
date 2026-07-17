@@ -39,14 +39,21 @@ def _supports_effort(model: str) -> bool:
 # Opus 4.7 *removed* the sampling parameters: temperature / top_p / top_k are
 # rejected with a 400 on Opus 4.7+ **unconditionally** — whether or not
 # ``effort`` is sent. This is a MODEL-based rule, not an effort-based one: Opus
-# 4.5/4.6 and every Sonnet still accept temperature (even alongside effort).
+# 4.5/4.6 and every Sonnet still accept temperature (even alongside effort). The
+# Fable-5 family (and its ``claude-mythos-preview`` predecessor) shares that API
+# surface and also removes sampling params, so it is special-cased like the
+# effort gate's ``_EFFORT_EXACT``.
 _SAMPLING_REMOVED = re.compile(r"^claude-opus-(\d+)-(\d+)$")
 _SAMPLING_REMOVED_MIN = (4, 7)
+_SAMPLING_REMOVED_EXACT = {"claude-mythos-preview"}
 
 
 def _rejects_sampling_params(model: str) -> bool:
     """Whether Anthropic 400s on temperature/top_p/top_k for this model."""
-    match = _SAMPLING_REMOVED.match(model.lower())
+    model_lc = model.lower()
+    if model_lc in _SAMPLING_REMOVED_EXACT:
+        return True
+    match = _SAMPLING_REMOVED.match(model_lc)
     if not match:
         return False
     return (int(match.group(1)), int(match.group(2))) >= _SAMPLING_REMOVED_MIN

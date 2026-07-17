@@ -289,12 +289,13 @@ kairos loop --scenario toxic --mode deterministic
 ```
 
 **LLM** — the real debate. Internally (`_llm_decision`) the loop builds a
-`TradingAgentsGraph` with the Microstructure Analyst included and **attaches the
-causal bus** so every microstructure tool reads point-in-time:
+`TradingAgentsGraph` with **only** the bus-backed Microstructure Analyst (so the
+demo needs an LLM key but no external market-data keys) and **attaches the causal
+bus** so every microstructure tool reads point-in-time:
 
 ```python
 ta = TradingAgentsGraph(
-    selected_analysts=("microstructure", "market", "news", "fundamentals"),
+    selected_analysts=("microstructure",),  # the loop default; add market/news/… for the full firm
     config=cfg,
 )
 final_state, decision_text = ta.propagate(

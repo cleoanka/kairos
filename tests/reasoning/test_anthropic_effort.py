@@ -132,6 +132,17 @@ class TestSamplingParamGate:
         ).get_llm()
         assert captured["kwargs"]["temperature"] == 0.2
 
+    def test_mythos_preview_drops_temperature(self, monkeypatch):
+        # The Fable-5 family / mythos preview is effort-capable AND removes the
+        # sampling params (parallel to test_mythos_preview_receives_effort). The
+        # Opus-only regex missed it (kai7-00).
+        captured = _capture_kwargs(monkeypatch)
+        with pytest.warns(RuntimeWarning, match="temperature"):
+            mod.AnthropicClient(
+                model="claude-mythos-preview", temperature=0.2, api_key="x"
+            ).get_llm()
+        assert "temperature" not in captured["kwargs"]
+
     def test_temperature_kept_when_effort_unsupported(self, monkeypatch):
         """A model that ignores effort still accepts temperature — keep it."""
         captured = _capture_kwargs(monkeypatch)
