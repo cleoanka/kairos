@@ -87,6 +87,28 @@ def test_as_trend_reduce_only():
     assert lng.ask_sz > 0 and lng.bid_sz == 0.0
 
 
+@pytest.mark.parametrize("gamma, k", [
+    (0.02, 0.0),     # zero intensity -> would divide by zero
+    (0.02, -0.02),   # negative intensity where 1 + gamma/k <= 0 -> log domain error
+    (0.02, -1.0),    # more-negative intensity
+    (0.0, 0.5),      # zero risk-aversion -> would divide by zero in the log term
+    (-0.1, 0.5),     # negative risk-aversion
+])
+def test_as_degenerate_spread_params_stand_aside(gamma, k):
+    # k (intensity) and gamma (risk-aversion) are free, swept config knobs; a
+    # non-positive value makes the closed-form half-spread ill-defined (÷0 or a
+    # log-domain error). Fail safe to a stand-aside quote rather than crash the
+    # decision (and, via grid_search, abort the whole sweep).
+    q = AvellanedaStoikovMaker(gamma=gamma, k=k).decide(int(Regime.RANGE), 99.0, 101.0, 0.0)
+    assert q.bid_px is None and q.ask_px is None and not q.two_sided
+
+
+def test_as_positive_spread_params_still_quote():
+    # Guard must not over-fire: any strictly-positive (gamma, k) still quotes.
+    q = AvellanedaStoikovMaker(gamma=0.02, k=1e-9).decide(int(Regime.RANGE), 99.0, 101.0, 0.0)
+    assert q.two_sided and q.ask_px > q.bid_px
+
+
 def test_as_maker_has_no_inert_tick_param():
     # The A-S maker quotes purely from the reservation price/half-spread clamped
     # to the touch — it never snaps to a grid — so it must not carry an inert

@@ -47,7 +47,11 @@ class AvellanedaStoikovMaker:
                inventory: float) -> Quote:
         if not (math.isfinite(best_bid) and math.isfinite(best_ask)):
             return Quote(None, 0.0, None, 0.0)   # corrupt book — do not quote
+        if not (self.k > 0.0 and self.gamma > 0.0):
+            return Quote(None, 0.0, None, 0.0)   # degenerate spread params — stand aside
         mid = 0.5 * (best_bid + best_ask)
+        if not math.isfinite(mid):
+            return Quote(None, 0.0, None, 0.0)   # finite touch, overflowing mid — stand aside
         sigma = self._sigma(mid)
         if regime == Regime.TOXIC:
             return Quote(None, 0.0, None, 0.0)

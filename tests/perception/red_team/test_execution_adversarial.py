@@ -32,6 +32,21 @@ def test_makers_refuse_non_finite_book():
             assert q.bid_px is None and q.ask_px is None
 
 
+def test_as_maker_refuses_overflowing_mid_from_finite_book():
+    # Both operands are finite but their sum overflows the mid to +/-inf; the
+    # corrupt-book guard must catch the computed mid, not just its inputs — a
+    # non-finite quote must never leak past the stand-aside intent, and the
+    # overflowing mid must not poison the volatility deque.
+    m = AvellanedaStoikovMaker()
+    for bb, ba in [(1e308, 1e308), (-1e308, -1e308)]:
+        q = m.decide(int(Regime.RANGE), bb, ba, 0.0)
+        assert q.bid_px is None and q.ask_px is None
+    assert all(math.isfinite(x) for x in m._mids)  # deque never saw a non-finite mid
+    # A finite-mid book still quotes (guard does not over-fire).
+    q = m.decide(int(Regime.RANGE), 99.0, 101.0, 0.0)
+    assert q.two_sided
+
+
 def test_as_extreme_inventory_quotes_finite_and_uncrossed():
     q = AvellanedaStoikovMaker().decide(int(Regime.RANGE), 99.0, 101.0, inventory=1e9)
     if q.bid_px is not None and q.ask_px is not None:
