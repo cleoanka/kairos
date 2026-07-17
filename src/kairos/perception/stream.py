@@ -342,6 +342,12 @@ def _load_predictor(real: bool = True):
 def serve_live(port: int = 8000, symbol: str = "BTCUSDT", real: bool = True,
                open_browser: bool = True) -> int:
     global STREAM
+    if not 1 <= port <= 65535:
+        # Validate up front — an out-of-range port raises OverflowError (not a
+        # subclass of OSError) inside bind, slipping past the handler below, and
+        # would otherwise leak the already-started daemon capture thread.
+        print(f"could not start server on port {port}: port must be 1-65535.")
+        return 1
     from .web.build import _load_metrics
     predictor, src, is_real = _load_predictor(real)
     STREAM = _Stream(predictor, _load_metrics(is_real), src)
