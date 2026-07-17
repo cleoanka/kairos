@@ -86,3 +86,39 @@ class TestEffortGate:
         assert captured["kwargs"]["max_tokens"] == 1024
         assert captured["kwargs"]["timeout"] == 30
         assert "effort" not in captured["kwargs"]
+
+
+@pytest.mark.unit
+class TestTemperatureEffortMutualExclusion:
+    """``temperature`` and ``effort`` are mutually exclusive per the Anthropic API.
+
+    Effort-capable models (Opus 4.7+ / Fable 5) REMOVE ``temperature`` and 400
+    when both are sent. ``get_llm`` must drop temperature when effort is active,
+    mirroring the effort gate (kai5-02).
+    """
+
+    def test_effort_capable_model_does_not_receive_temperature(self, monkeypatch):
+        captured = _capture_kwargs(monkeypatch)
+        with pytest.warns(RuntimeWarning, match="temperature"):
+            mod.AnthropicClient(
+                model="claude-opus-4-8", effort="high", temperature=0.2, api_key="x"
+            ).get_llm()
+        assert "temperature" not in captured["kwargs"]
+        assert captured["kwargs"]["effort"] == "high"
+
+    def test_temperature_kept_when_no_effort(self, monkeypatch):
+        """Without effort, temperature passes through unchanged."""
+        captured = _capture_kwargs(monkeypatch)
+        mod.AnthropicClient(
+            model="claude-opus-4-8", temperature=0.2, api_key="x"
+        ).get_llm()
+        assert captured["kwargs"]["temperature"] == 0.2
+
+    def test_temperature_kept_when_effort_unsupported(self, monkeypatch):
+        """A model that ignores effort still accepts temperature — keep it."""
+        captured = _capture_kwargs(monkeypatch)
+        mod.AnthropicClient(
+            model="claude-haiku-4-5", effort="high", temperature=0.2, api_key="x"
+        ).get_llm()
+        assert captured["kwargs"]["temperature"] == 0.2
+        assert "effort" not in captured["kwargs"]

@@ -1,4 +1,5 @@
 import re
+import warnings
 from typing import Any
 
 from langchain_anthropic import ChatAnthropic
@@ -61,10 +62,26 @@ class AnthropicClient(BaseLLMClient):
         if self.base_url:
             llm_kwargs["base_url"] = self.base_url
 
+        effort_active = "effort" in self.kwargs and _supports_effort(self.model)
+
         for key in _PASSTHROUGH_KWARGS:
             if key not in self.kwargs:
                 continue
             if key == "effort" and not _supports_effort(self.model):
+                continue
+            # Effort-capable models (Opus 4.7+ / Fable 5) REMOVE ``temperature``
+            # (400 invalid_request_error). ``effort`` and ``temperature`` are
+            # mutually exclusive per the API, so drop temperature when effort is
+            # active — mirroring the effort skip above (kai5-02).
+            if key == "temperature" and effort_active:
+                warnings.warn(
+                    (
+                        f"Dropping 'temperature' for model '{self.model}': it is "
+                        f"mutually exclusive with 'effort', which is active."
+                    ),
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
                 continue
             llm_kwargs[key] = self.kwargs[key]
 
