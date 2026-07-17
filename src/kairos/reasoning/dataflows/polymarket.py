@@ -127,7 +127,11 @@ def get_prediction_markets(topic: str, limit: int | None = None) -> str:
         outcomes = _parse_json_list(m.get("outcomes"))
         try:
             prob = float(prices[0])
-        except (ValueError, IndexError):
+        except (ValueError, IndexError, TypeError):
+            # prices may be an empty list (IndexError), a non-numeric string
+            # (ValueError), or a list whose first element is itself an
+            # object/null/array (TypeError) — the untrusted Gamma payload isn't
+            # guaranteed to hold scalars. Skip that one market, not the batch.
             continue
         label = outcomes[0] if outcomes else "Yes"
         volume = m.get("volumeNum") or 0

@@ -140,6 +140,32 @@ class PolymarketResilienceTests(unittest.TestCase):
         self.assertIn("Open big?", out)
         self.assertIn("Open small?", out)
 
+    def test_list_of_non_scalar_prices_skip_one_market_not_the_batch(self):
+        # A JSON *list* whose first element is itself an object/null/array passes
+        # the non-empty-list filter but is not a number: float(prices[0]) raises
+        # TypeError, which must skip that one market — not propagate out and abort
+        # the batch, discarding every well-formed market alongside it.
+        object_elem = _market("Object elem?", 0.6, volume=7_000_000, end_date="2030-12-31T00:00:00Z")
+        object_elem["outcomePrices"] = '[{"Yes": 0.5}]'  # list of dict
+        null_elem = _market("Null elem?", 0.5, volume=7_500_000, end_date="2030-12-31T00:00:00Z")
+        null_elem["outcomePrices"] = "[null]"  # list of None
+        list_elem = _market("List elem?", 0.4, volume=8_000_000, end_date="2030-12-31T00:00:00Z")
+        list_elem["outcomePrices"] = "[[0.5]]"  # list of list
+        search = {
+            "events": [
+                {"markets": [object_elem, null_elem, list_elem] + _SEARCH["events"][0]["markets"]}
+            ]
+        }
+        with mock.patch.object(polymarket, "_request", return_value=search):
+            out = polymarket.get_prediction_markets("anything", limit=10)
+        # The malformed rows are silently skipped, not rendered, and don't abort.
+        self.assertNotIn("Object elem?", out)
+        self.assertNotIn("Null elem?", out)
+        self.assertNotIn("List elem?", out)
+        # The well-formed markets still come through.
+        self.assertIn("Open big?", out)
+        self.assertIn("Open small?", out)
+
 
 @pytest.mark.unit
 class PolymarketRoutingTests(unittest.TestCase):
