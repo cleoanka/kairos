@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import os
+import struct
 import uuid
 from pathlib import Path
 
@@ -228,6 +230,38 @@ def load_trained(weights: str = "artifacts/lob_encoder.safetensors",
     return model, stats
 
 
+def save_weights_with_run_id(model, path: str, run_id: str) -> None:
+    """Write the encoder ``.safetensors`` with a ``run_id`` stamped in its metadata.
+
+    ``nn.Module.save_weights`` cannot carry metadata, so we flatten the params and
+    call ``mx.save_safetensors`` directly. The stamp is the encoder's half of the
+    three-file coherence check (:func:`regime.predict._reject_mixed_provenance`):
+    latents/regime already carry it, and stamping the weights lets a load reject a
+    mixed set even when the crash committed the *new* encoder first (real.py swaps
+    weights before latents). Only ever called on the MLX training path.
+    """
+    from mlx.utils import tree_flatten
+
+    flat = tree_flatten(model.parameters(), destination={})
+    mx.save_safetensors(path, flat, metadata={"run_id": run_id})
+
+
+def read_weights_run_id(weights: str) -> str | None:
+    """Return the ``run_id`` stamped in a ``.safetensors`` header, or ``None``.
+
+    Dependency-free (the provenance guard runs on non-MLX hosts too): the format
+    is an 8-byte little-endian header length, then a JSON header whose optional
+    ``__metadata__`` map holds the stamp. Older weights without it read as
+    ``None`` (backward-compatible — nothing to compare).
+    """
+    with open(weights, "rb") as fh:
+        (header_len,) = struct.unpack("<Q", fh.read(8))
+        header = json.loads(fh.read(header_len).decode("utf-8"))
+    meta = header.get("__metadata__") or {}
+    rid = meta.get("run_id")
+    return str(rid) if rid is not None else None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Train the self-supervised LOB embedder (MLX)")
     ap.add_argument("--data", type=Path, default=Path("data/synthetic.parquet"))
@@ -259,13 +293,15 @@ def main(argv: list[str] | None = None) -> int:
     w_tmp = f"{args.weights}.{stem}.safetensors"
     try:
         # Carry ts/mid (NOT regime) so the embedder stays strictly label-free.
+        # ts is float64: float32 has a 128s ULP near a modern UNIX epoch, which
+        # would quantise sub-2-minute snapshots to an identical timestamp.
         np.savez(
             l_tmp, z=z.astype(np.float32),
-            ts=df["ts"].to_numpy(np.float32), mid=df["mid"].to_numpy(np.float32),
+            ts=df["ts"].to_numpy(np.float64), mid=df["mid"].to_numpy(np.float64),
             mu=stats["mu"], sd=stats["sd"], final_loss=np.float32(history[-1]),
             run_id=run_id,
         )
-        model.save_weights(w_tmp)
+        save_weights_with_run_id(model, w_tmp, run_id)
         # Only now that both temps are fully written do we swap them into place.
         os.replace(l_tmp, args.latents)
         os.replace(w_tmp, args.weights)

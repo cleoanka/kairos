@@ -55,7 +55,7 @@ def record(url: str, symbol: str, n: int, tick_size: float, out: Path) -> pd.Dat
 def build_real_model(df: pd.DataFrame, epochs: int = 120, k: int = 3) -> dict:
     from sklearn.cluster import KMeans
 
-    from .models.embedder import embed, train
+    from .models.embedder import embed, save_weights_with_run_id, train
 
     X, _ = featurize(df)
     model, stats, _ = train(X, epochs=epochs)
@@ -72,9 +72,12 @@ def build_real_model(df: pd.DataFrame, epochs: int = 120, k: int = 3) -> dict:
     # and RegimePredictor loads silently, driving a wrong TOXIC veto. Stage each
     # to a unique pid+uuid temp and os.replace them into place only after ALL are
     # written, so a crash can never overwrite a good file with a partial one; a
-    # shared run_id stamped in both npz files lets a load reject a mixed set.
-    # Temps are cleaned on any BaseException (their unique suffix means nothing
-    # else would ever reclaim an orphan). See stockstats_utils.py for the pattern.
+    # shared run_id stamped in all three files (the encoder's goes in the
+    # safetensors metadata) lets a load reject a mixed set — critical here because
+    # this path swaps weights FIRST, so a crash before the latents/regime swap
+    # would otherwise leave a NEW encoder past the two-npz guard. Temps are cleaned
+    # on any BaseException (their unique suffix means nothing else would ever
+    # reclaim an orphan). See stockstats_utils.py for the pattern.
     REAL_DIR.mkdir(parents=True, exist_ok=True)
     weights_path = REAL_DIR / "lob_encoder.safetensors"
     latents_path = REAL_DIR / "latents.npz"
@@ -89,7 +92,7 @@ def build_real_model(df: pd.DataFrame, epochs: int = 120, k: int = 3) -> dict:
         (f"{regime_path}.{stem}.npz", regime_path),
     ]
     try:
-        model.save_weights(staged[0][0])
+        save_weights_with_run_id(model, staged[0][0], run_id)
         np.savez(staged[1][0], z=z.astype(np.float32),
                  mu=stats["mu"], sd=stats["sd"], run_id=run_id)
         np.savez(staged[2][0],
