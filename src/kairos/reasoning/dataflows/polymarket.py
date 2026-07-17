@@ -39,9 +39,13 @@ def _parse_json_list(value) -> list:
     if isinstance(value, list):
         return value
     try:
-        return json.loads(value)
+        result = json.loads(value)
     except (json.JSONDecodeError, TypeError):
         return []
+    # The untrusted Gamma payload may encode a JSON scalar/object rather than an
+    # array; anything but a list is unusable here (the caller subscripts it), so
+    # skip that one market instead of letting prices[0]/outcomes[0] abort the run.
+    return result if isinstance(result, list) else []
 
 
 def _is_forward_looking(market: dict, now: datetime) -> bool:

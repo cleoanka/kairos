@@ -114,6 +114,32 @@ class PolymarketResilienceTests(unittest.TestCase):
         self.assertIn("Open big?", out)
         self.assertIn("Open small?", out)
 
+    def test_non_list_outcome_fields_skip_one_market_not_the_batch(self):
+        # Gamma is untrusted: outcomePrices/outcomes may arrive as a JSON scalar
+        # or object rather than an array. A non-list must not slip past the
+        # filter and crash prices[0]/outcomes[0] (TypeError/KeyError) — the bad
+        # row is skipped, the good ones still render.
+        scalar_prices = _market("Scalar prices?", 0.6, volume=7_000_000, end_date="2030-12-31T00:00:00Z")
+        scalar_prices["outcomePrices"] = "0.6"  # JSON scalar -> float, not a list
+        object_prices = _market("Object prices?", 0.5, volume=7_500_000, end_date="2030-12-31T00:00:00Z")
+        object_prices["outcomePrices"] = '{"Yes": 0.5}'  # JSON object -> dict
+        object_outcomes = _market("Object outcomes?", 0.4, volume=8_000_000, end_date="2030-12-31T00:00:00Z")
+        object_outcomes["outcomes"] = '{"first": "Yes"}'  # non-list outcomes
+        search = {
+            "events": [
+                {"markets": [scalar_prices, object_prices, object_outcomes] + _SEARCH["events"][0]["markets"]}
+            ]
+        }
+        with mock.patch.object(polymarket, "_request", return_value=search):
+            out = polymarket.get_prediction_markets("anything", limit=10)
+        # The malformed rows are silently skipped, not rendered, and don't abort.
+        self.assertNotIn("Scalar prices?", out)
+        self.assertNotIn("Object prices?", out)
+        self.assertNotIn("Object outcomes?", out)
+        # The well-formed markets still come through.
+        self.assertIn("Open big?", out)
+        self.assertIn("Open small?", out)
+
 
 @pytest.mark.unit
 class PolymarketRoutingTests(unittest.TestCase):
