@@ -58,7 +58,10 @@ def _is_forward_looking(market: dict, now: datetime) -> bool:
         try:
             if datetime.fromisoformat(end_date.replace("Z", "+00:00")) < now:
                 return False
-        except ValueError:
+        except (ValueError, AttributeError, TypeError):
+            # A malformed endDate (unparseable string, or a non-string like
+            # null/number) is unusable, not fatal — skip the date check for this
+            # one market rather than discarding the whole batch.
             pass
     return bool(_parse_json_list(market.get("outcomePrices"))) and bool(
         _parse_json_list(market.get("outcomes"))
@@ -124,7 +127,8 @@ def get_prediction_markets(topic: str, limit: int | None = None) -> str:
             continue
         label = outcomes[0] if outcomes else "Yes"
         volume = m.get("volumeNum") or 0
-        end_date = (m.get("endDate") or "")[:10]
+        raw_end = m.get("endDate")
+        end_date = raw_end[:10] if isinstance(raw_end, str) else ""
         wk = m.get("oneWeekPriceChange")
         wk_str = (
             f", 1-week {wk * 100:+.1f}pp"

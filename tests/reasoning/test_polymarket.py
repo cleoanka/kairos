@@ -101,6 +101,19 @@ class PolymarketResilienceTests(unittest.TestCase):
         self.assertIn("unavailable", out.lower())
         self.assertIn("Fed rate cut", out)
 
+    def test_malformed_end_date_skips_one_market_not_the_batch(self):
+        # A non-string endDate (null/number) must not crash _is_forward_looking
+        # and take the whole batch down — the malformed row is skipped, the good
+        # ones still render.
+        bad_null = _market("Null date?", 0.60, volume=7_000_000, end_date=None)
+        bad_num = _market("Numeric date?", 0.40, volume=6_000_000, end_date=1234567890)
+        search = {"events": [{"markets": [bad_null, bad_num] + _SEARCH["events"][0]["markets"]}]}
+        with mock.patch.object(polymarket, "_request", return_value=search):
+            out = polymarket.get_prediction_markets("anything", limit=10)
+        # The well-formed markets survive; the malformed ones don't blow up the run.
+        self.assertIn("Open big?", out)
+        self.assertIn("Open small?", out)
+
 
 @pytest.mark.unit
 class PolymarketRoutingTests(unittest.TestCase):
