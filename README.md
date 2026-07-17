@@ -257,7 +257,7 @@ src/kairos/
 src/cpp, src/bindings   C++ zero-copy ring
 scripts/         soul_check.py · reproduce.py · make_readme_figures.py · build_cpp.sh
 docs/            ARCHITECTURE · PHILOSOPHY · CAUSALITY · HOW_IT_WORKS  (+ images/)
-tests/           bridge · loop · perception · reasoning   (771 passing, 14 skipped)
+tests/           bridge · loop · perception · reasoning   (772 passing, 14 skipped)
 ```
 
 ## 📚 Documentation
