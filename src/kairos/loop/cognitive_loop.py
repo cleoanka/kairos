@@ -174,7 +174,13 @@ def _shared_perception():
     try:
         yield
     finally:
-        el.perceive_regimes = original
+        # Restore unconditionally — even if the body raised — so a failed run
+        # never leaves the memoized wrapper installed for the next run. Guard
+        # the swap-back so we only unwind our OWN wrapper: if something nested
+        # installed a newer one we leave it in place (strict LIFO), never
+        # clobbering it with our stale `original`.
+        if el.perceive_regimes is memoized:
+            el.perceive_regimes = original
 
 
 def run_cognitive_loop(cfg: LoopConfig | None = None, *, df=None,

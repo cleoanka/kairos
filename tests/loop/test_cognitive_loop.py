@@ -82,6 +82,18 @@ def test_perceived_regime_array_computed_once_per_run(monkeypatch):
     assert el.perceive_regimes is counting
 
 
+def test_shared_perception_restores_original_when_body_raises():
+    """An exception mid-run must still restore the module-global perceive_regimes:
+    the finally has to run unconditionally so a failed run never leaves the
+    memoized wrapper installed to poison the next run."""
+    real = el.perceive_regimes
+    with pytest.raises(RuntimeError, match="boom"):
+        with cl._shared_perception():
+            assert el.perceive_regimes is not real     # wrapper is installed inside
+            raise RuntimeError("boom mid-run")
+    assert el.perceive_regimes is real                 # and restored on the error path
+
+
 def test_sharing_perception_keeps_headline_numbers_identical():
     """Sharing the perceived-regime array must be bit-for-bit behaviour-preserving:
     the decision, PnL and every baseline are unchanged versus recomputing it 3x."""
