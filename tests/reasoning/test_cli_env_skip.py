@@ -29,6 +29,31 @@ class TestProviderDefaultUrl(unittest.TestCase):
         with mock.patch.dict(os.environ, {"OLLAMA_BASE_URL": "http://host:1234/v1"}):
             self.assertEqual(provider_default_url("ollama"), "http://host:1234/v1")
 
+    def test_glm_defaults_to_zai_international(self):
+        # "glm" is the Z.AI international provider (ZHIPU_API_KEY); the China
+        # BigModel endpoint belongs to "glm-cn"/ZHIPU_CN_API_KEY. An env-driven
+        # glm run must not send the international key to the China host.
+        from kairos.reasoning_cli.utils import provider_default_url
+        self.assertEqual(provider_default_url("glm"), "https://api.z.ai/api/paas/v4/")
+
+    def test_cli_table_matches_client_spec(self):
+        # The CLI provider table and the client-side registry are two copies of
+        # the same endpoints; assert every OpenAI-compatible key with a menu row
+        # resolves to the exact spec base_url so neither can silently diverge.
+        # "openai" is the one intentional exception: its spec base_url is None
+        # (SDK/Responses-API default) while the table shows the canonical host.
+        from kairos.reasoning.llm_clients.openai_client import (
+            OPENAI_COMPATIBLE_PROVIDERS,
+        )
+        from kairos.reasoning_cli.utils import _llm_provider_table, provider_default_url
+
+        table_keys = {pk for _, pk, _ in _llm_provider_table()}
+        for pk, spec in OPENAI_COMPATIBLE_PROVIDERS.items():
+            if pk == "openai" or pk not in table_keys:
+                continue  # openai is the documented None-base_url special case
+            with self.subTest(provider=pk):
+                self.assertEqual(provider_default_url(pk), spec.base_url)
+
 
 @pytest.mark.unit
 class TestCliSkipsPromptsFromEnv(unittest.TestCase):
