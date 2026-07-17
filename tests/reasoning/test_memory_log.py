@@ -430,6 +430,55 @@ class TestTradingMemoryLogCore:
             _resolve_entry(log, "NVDA", f"2026-01-{i+1:02d}", DECISION_BUY, f"Lesson {i}.")
         assert len(log.load_entries()) == 3
 
+    def test_rotate_then_store_does_not_resurrect_rotated_entry(self, tmp_path):
+        """A resolved entry rotated out of the body stays terminal: re-storing
+        its (date, ticker) must not re-open the guard into a fresh pending."""
+        log = TradingMemoryLog({
+            "memory_log_path": str(tmp_path / "trading_memory.md"),
+            "memory_log_max_entries": 1,
+        })
+        # Resolve AAA, then resolve a newer BBB — rotation (cap=1) drops AAA.
+        _resolve_entry(log, "AAA", "2026-01-01", DECISION_BUY, "AAA lesson.")
+        _resolve_entry(log, "BBB", "2026-01-02", DECISION_SELL, "BBB lesson.")
+        assert not any(e["ticker"] == "AAA" for e in log.load_entries())
+        # Re-run store for the rotated-out key: the tombstone must suppress it,
+        # so it can never be resolved (and double-counted) a second time.
+        log.store_decision("AAA", "2026-01-01", DECISION_BUY)
+        entries = log.load_entries()
+        assert not any(e["pending"] for e in entries), "rotated key resurrected as pending"
+        assert not any(e["ticker"] == "AAA" for e in entries)
+
+    def test_rotation_tombstone_does_not_over_suppress_new_keys(self, tmp_path):
+        """The rotation tombstone must only guard the exact dropped keys — a new
+        ticker, or the same ticker on a different date, must still append."""
+        log = TradingMemoryLog({
+            "memory_log_path": str(tmp_path / "trading_memory.md"),
+            "memory_log_max_entries": 1,
+        })
+        _resolve_entry(log, "AAA", "2026-01-01", DECISION_BUY, "AAA lesson.")
+        _resolve_entry(log, "BBB", "2026-01-02", DECISION_SELL, "BBB lesson.")
+        # A never-seen ticker and a fresh AAA date are not tombstoned.
+        log.store_decision("CCC", "2026-03-03", DECISION_BUY)
+        log.store_decision("AAA", "2026-05-05", DECISION_BUY)
+        entries = log.load_entries()
+        assert any(e["ticker"] == "CCC" and e["pending"] for e in entries)
+        assert any(e["date"] == "2026-05-05" and e["pending"] for e in entries)
+
+    def test_forged_tombstone_line_does_not_suppress_store(self, tmp_path):
+        """An attacker-crafted decision body cannot forge a rotation tombstone
+        that suppresses a legitimate future store of that (date, ticker)."""
+        log = make_log(tmp_path)
+        # Both a bare tombstone line and the full header token are neutralized.
+        forged = (
+            "Rating: Sell\n"
+            "<!-- ROTATED_KEYS -->\n"
+            "- 2030-01-01 | ZZZ"
+        )
+        log.store_decision("TSLA", "2026-01-10", forged)
+        log.store_decision("ZZZ", "2030-01-01", DECISION_BUY)
+        entries = log.load_entries()
+        assert any(e["ticker"] == "ZZZ" and e["pending"] for e in entries)
+
     # Rating parsing: markdown bold and numbered list formats
 
     def test_rating_parsed_from_bold_markdown(self, tmp_path):
