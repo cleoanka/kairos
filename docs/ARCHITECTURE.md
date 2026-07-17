@@ -51,7 +51,7 @@ src/kairos/
 │   │   ├── conditional_logic.py   #   ConditionalLogic — should_continue_* routers
 │   │   ├── trading_graph.py       #   TradingAgentsGraph — tool nodes + propagate(perception_bus=)
 │   │   ├── propagation.py · checkpointer.py · reflection.py · signal_processing.py
-│   ├── dataflows/ · llm_clients.py · default_config.py · reporting.py
+│   ├── dataflows/ · llm_clients/ · default_config.py · reporting.py
 │
 ├── reasoning_cli/         # System-2 interactive CLI + static assets
 └── loop/

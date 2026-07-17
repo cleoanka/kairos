@@ -380,5 +380,5 @@ is the difference between a backtest you *hope* is honest and one that is honest
 
 ### Source of truth
 - [`src/kairos/bridge/causal_bus.py`](../src/kairos/bridge/causal_bus.py) — `to_epoch`, `CausalPerceptionBus`, `LookAheadError`, `build_causal_bus`.
-- [`tests/bridge/test_causal_bus.py`](../tests/bridge/test_causal_bus.py) — the ten proofs above.
+- [`tests/bridge/test_causal_bus.py`](../tests/bridge/test_causal_bus.py) — the proofs above, as executable tests.
 - [`scripts/soul_check.py`](../scripts/soul_check.py) — the constitution, Rule 5 (`_NONCAUSAL`, `_BRIDGE_CAUSAL_FILES`).

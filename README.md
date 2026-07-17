@@ -72,7 +72,7 @@ No API keys, no GPU, no market-data account — the whole loop runs on synthetic
 ```bash
 git clone https://github.com/cleoanka/kairos && cd kairos
 make install          # core only (numpy/pandas/sklearn) — portable, no keys
-make gate             # soul_check + 218 core tests + loop smoke  → all green
+make gate             # soul_check + 220 core tests + loop smoke  → all green
 
 kairos loop --scenario range     # perceive → reason → act → reflect
 ```
@@ -257,7 +257,7 @@ src/kairos/
 src/cpp, src/bindings   C++ zero-copy ring
 scripts/         soul_check.py · reproduce.py · make_readme_figures.py · build_cpp.sh
 docs/            ARCHITECTURE · PHILOSOPHY · CAUSALITY · HOW_IT_WORKS  (+ images/)
-tests/           bridge · loop · perception · reasoning   (753 passing, 14 skipped)
+tests/           bridge · loop · perception · reasoning   (771 passing, 14 skipped)
 ```
 
 ## 📚 Documentation
